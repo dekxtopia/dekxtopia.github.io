@@ -515,16 +515,41 @@
       .sms-glass { max-width: 100%; width: 100%; min-width: unset; }
     }
 
-    /* ── Hide EmulatorJS UI chrome — decorative mode ── */
+    /* ── Hide ALL EmulatorJS UI — fully decorative ── */
+    #sms-game { width: 100%; height: 100%; }
+    #sms-game canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+    /* Nuke toolbar, gamepad, nipple joystick, and every overlay */
+    #sms-game [class*="menu_bar"],
+    #sms-game [class*="menu"],
+    #sms-game [class*="toolbar"],
+    #sms-game [class*="settings"],
+    #sms-game [class*="gamepad"],
+    #sms-game [class*="virtualGamepad"],
+    #sms-game [class*="fast_forward"],
+    #sms-game [class*="slow"],
+    #sms-game .nipple,
+    #sms-game .nipple_manager,
+    #sms-game .front,
+    #sms-game .back,
     #sms-game .ejs_menu_bar,
     #sms-game .ejs_menu,
     #sms-game .ejs_settings,
+    #sms-game .ejs_virtualGamepad,
+    #sms-game .ejs_gamepad,
     #sms-game .ejs_context_menu,
-    #sms-game .ejs_loading_text,
-    #sms-game #ejs_settings_button { display: none !important; }
-    /* Make the canvas fill the wrapper */
-    #sms-game { width: 100%; height: 100%; }
-    #sms-game canvas { display: block; width: 100% !important; height: 100% !important; image-rendering: pixelated; }
+    #sms-game #ejs_settings_button,
+    #sms-game button {
+      display: none !important;
+      visibility: hidden !important;
+      opacity: 0 !important;
+      pointer-events: none !important;
+    }
 </style>
 </head>
 <body>
@@ -934,34 +959,49 @@
 
 <!-- EmulatorJS — Sega Mark III JP BIOS decorativo -->
 <script>
-  EJS_player        = '#sms-game';
-  EJS_core          = 'segaMS';
-  EJS_pathtodata    = 'https://cdn.emulatorjs.org/stable/data/';
-  // Use the JP BIOS as the ROM — segaMS core boots to BIOS screen when it detects it
-  EJS_gameUrl       = '/bios.sms';
-  EJS_biosUrl       = '/bios.sms';
-  EJS_startOnLoaded = true;
-  EJS_volume        = 0;
-  EJS_color         = '#a78bfa';
-  // Hide all UI buttons — pure decorative display
+  EJS_player         = '#sms-game';
+  EJS_core           = 'segaMS';
+  EJS_pathtodata     = 'https://cdn.emulatorjs.org/stable/data/';
+  EJS_gameUrl        = '/bios.sms';
+  EJS_biosUrl        = '/bios.sms';
+  EJS_startOnLoaded  = true;
+  EJS_volume         = 0;
+  EJS_color          = '#a78bfa';
+  EJS_backgroundColor = '#000000';
+
+  // Hide EVERY toolbar button
   EJS_Buttons = {
-    playPause:    false,
-    restart:      false,
-    mute:         false,
-    settings:     false,
-    fullscreen:   false,
-    saveState:    false,
-    loadState:    false,
-    screenRecord: false,
-    gamepad:      false,
-    cheat:        false,
-    volume:       false,
-    saveSavFiles: false,
-    loadSavFiles: false,
-    quickSave:    false,
-    quickLoad:    false,
-    screenshot:   false,
-    cacheManager: false,
+    playPause: false, restart: false, mute: false,
+    settings: false, fullscreen: false, saveState: false,
+    loadState: false, screenRecord: false, gamepad: false,
+    cheat: false, volume: false, saveSavFiles: false,
+    loadSavFiles: false, quickSave: false, quickLoad: false,
+    screenshot: false, cacheManager: false, exitEmulation: false,
+  };
+
+  // Disable virtual gamepad / touch controls completely
+  EJS_VirtualGamepadSettings = [];
+
+  // Once game starts, nuke any remaining UI via DOM
+  EJS_onGameStart = function() {
+    setTimeout(function() {
+      var container = document.getElementById('sms-game');
+      if (!container) return;
+      // Hide toolbar, virtual gamepad, and any overlays
+      var hide = [
+        '.ejs_menu_bar', '.ejs_menu', '.ejs_settings',
+        '.ejs_virtualGamepad', '.ejs_gamepad',
+        '[class*="gamepad"]', '[class*="virtualGamepad"]',
+        '[class*="menu_bar"]', '[class*="toolbar"]',
+        '.ejs_fast_forward', '.ejs_slow_motion',
+        '.nipple', '.nipple_manager', '.front', '.back',
+      ];
+      hide.forEach(function(sel) {
+        container.querySelectorAll(sel).forEach(function(el) {
+          el.style.cssText = 'display:none!important;visibility:hidden!important;opacity:0!important;pointer-events:none!important;';
+        });
+      });
+    }, 500);
   };
 </script>
 <script src="https://cdn.emulatorjs.org/stable/data/loader.js"></script>
