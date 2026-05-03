@@ -518,13 +518,12 @@
     /* ── EmulatorJS decorative container ── */
     #sms-game { width: 100%; height: 100%; }
 
-    /* Force-hide virtual gamepad on ALL screen sizes */
-    #sms-game ~ * [class*="virtualGamepad"],
-    #sms-game ~ * [class*="gamepad"],
+    /* Force-hide virtual gamepad — correct class from EJS source */
+    .ejs_virtualGamepad_parent,
     .ejs_virtualGamepad,
     .ejs_gamepad,
-    div[class*="ejs_virtualGamepad"],
-    div[class*="ejs_gamepad"] {
+    [class*="virtualGamepad"],
+    [class*="nipple"] {
       display: none !important;
       visibility: hidden !important;
       pointer-events: none !important;
@@ -944,59 +943,71 @@
 
 <!-- EmulatorJS — Sega CD US v2.11x BIOS decorativo -->
 <script>
-  EJS_player        = '#sms-game';
-  EJS_core          = 'segaCD';
-  EJS_pathtodata    = 'https://cdn.emulatorjs.org/stable/data/';
-  EJS_biosUrl       = '/bios.bin';
-  EJS_gameUrl       = '/bios.bin';
-  EJS_gameName      = 'bios.bin';
-  EJS_startOnLoaded = true;
-  EJS_mobileControls = false;
-  // Resume AudioContext on first user interaction to fix choppy/silent audio
-  document.addEventListener('click', function resumeAudio() {
-    if (window.EJS_emulator && EJS_emulator.gameManager) {
-      try { EJS_emulator.gameManager.audioContext && EJS_emulator.gameManager.audioContext.resume(); } catch(e) {}
+  if (!window._ejsLoaded) {
+    window._ejsLoaded = true;
+
+    EJS_player        = '#sms-game';
+    EJS_core          = 'segaCD';
+    EJS_pathtodata    = 'https://cdn.emulatorjs.org/stable/data/';
+    EJS_biosUrl       = '/bios.bin';
+    EJS_gameUrl       = '/bios.bin';
+    EJS_gameName      = 'bios.bin';
+    EJS_startOnLoaded = true;
+    EJS_volume        = 0;       // Muted until first user interaction (autoplay policy)
+    EJS_color         = '#a78bfa';
+    EJS_mobileControls = false;
+
+    EJS_Buttons = {
+      playPause: false, restart: false, mute: false,
+      settings: false, fullscreen: false, saveState: false,
+      loadState: false, screenRecord: false, gamepad: false,
+      cheat: false, volume: false, saveSavFiles: false,
+      loadSavFiles: false, quickSave: false, quickLoad: false,
+      screenshot: false, cacheManager: false, exitEmulation: false,
+    };
+
+    // On first user interaction anywhere on page → unmute + resume AudioContext
+    function unlockAudio() {
+      // Set volume via EmulatorJS API
+      if (window.EJS_emulator) {
+        try { EJS_emulator.setVolume(30); } catch(e) {}
+        try {
+          var ac = EJS_emulator.gameManager && EJS_emulator.gameManager.audioContext;
+          if (ac && ac.state === 'suspended') ac.resume();
+        } catch(e) {}
+      }
+      document.removeEventListener('click',      unlockAudio);
+      document.removeEventListener('touchstart', unlockAudio);
+      document.removeEventListener('keydown',    unlockAudio);
+      document.removeEventListener('scroll',     unlockAudio);
     }
-    document.removeEventListener('click', resumeAudio);
-  }, { once: true });
-  EJS_volume        = 100;
-  EJS_mobileControls = false;
-  EJS_color         = '#a78bfa';
+    document.addEventListener('click',      unlockAudio, { once: true });
+    document.addEventListener('touchstart', unlockAudio, { once: true, passive: true });
+    document.addEventListener('keydown',    unlockAudio, { once: true });
+    document.addEventListener('scroll',     unlockAudio, { once: true, passive: true });
 
-  EJS_Buttons = {
-    playPause: false, restart: false, mute: false,
-    settings: false, fullscreen: false, saveState: false,
-    loadState: false, screenRecord: false, gamepad: false,
-    cheat: false, volume: false, saveSavFiles: false,
-    loadSavFiles: false, quickSave: false, quickLoad: false,
-    screenshot: false, cacheManager: false, exitEmulation: false,
-  };
-
-  EJS_VirtualGamepadSettings = { buttons: [], sticks: [] };
-
-  window.addEventListener('load', function() {
-    var container = document.getElementById('sms-game');
-    if (!container) return;
-    var HIDE = [
-      '.ejs_menu_bar', '.ejs_menu', '.ejs_settings', '.ejs_context_menu',
-      '.ejs_virtualGamepad', '.ejs_gamepad', '[class*="virtualGamepad"]',
-      '[class*="gamepad"]', '[class*="nipple"]',
-      '.ejs_fast_forward', '.ejs_slow_motion', '#ejs_settings_button',
-      '.nipple', '.nipple_manager', '.back', '.front',
-    ];
-    function hideUI() {
-      HIDE.forEach(function(sel) {
-        container.querySelectorAll(sel).forEach(function(el) {
-          el.style.display = 'none';
-          el.style.visibility = 'hidden';
-          el.style.pointerEvents = 'none';
+    // Hide all UI chrome + virtual gamepad
+    window.addEventListener('load', function() {
+      var HIDE = [
+        '.ejs_virtualGamepad_parent', '.ejs_virtualGamepad', '.ejs_gamepad',
+        '[class*="virtualGamepad"]', '[class*="nipple"]',
+        '.ejs_menu_bar', '.ejs_menu', '.ejs_settings', '.ejs_context_menu',
+        '.ejs_fast_forward', '.ejs_slow_motion', '#ejs_settings_button',
+        '.nipple', '.nipple_manager', '.back', '.front',
+      ];
+      function hideUI() {
+        HIDE.forEach(function(sel) {
+          document.querySelectorAll(sel).forEach(function(el) {
+            el.style.cssText += ';display:none!important;visibility:hidden!important;pointer-events:none!important;';
+          });
         });
-      });
-    }
-    new MutationObserver(hideUI).observe(container, { childList: true, subtree: true });
-    setTimeout(hideUI, 1000);
-    setTimeout(hideUI, 3000);
-  });
+      }
+      new MutationObserver(hideUI).observe(document.body, { childList: true, subtree: true });
+      setTimeout(hideUI, 500);
+      setTimeout(hideUI, 2000);
+      setTimeout(hideUI, 4000);
+    });
+  }
 </script>
 <script src="https://cdn.emulatorjs.org/stable/data/loader.js"></script>
 <script src="https://cdn.emulatorjs.org/stable/data/loader.js"></script>
