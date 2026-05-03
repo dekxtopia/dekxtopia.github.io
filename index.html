@@ -536,6 +536,92 @@
       image-rendering: pixelated;
       image-rendering: crisp-edges;
     }
+
+    /* ═══════════════════════════════════════════
+       EMULATOR CAROUSEL
+       ═══════════════════════════════════════════ */
+    .emu-carousel { position: relative; }
+
+    .emu-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.6rem;
+      gap: 0.5rem;
+    }
+    .emu-title { margin-bottom: 0 !important; flex: 1; text-align: center; }
+
+    .emu-arrow {
+      background: rgba(99,63,210,0.2);
+      border: 1px solid rgba(167,139,250,0.25);
+      color: #c4b5fd;
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      font-size: 0.95rem;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      transition: background 150ms, border-color 150ms;
+    }
+    .emu-arrow:hover { background: rgba(99,63,210,0.4); border-color: rgba(167,139,250,0.5); }
+    .emu-arrow:disabled { opacity: 0.25; cursor: default; }
+
+    /* Dots */
+    .emu-dots {
+      display: flex; justify-content: center; gap: 6px;
+      margin-top: 0.6rem;
+    }
+    .emu-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: rgba(167,139,250,0.2);
+      border: 1px solid rgba(167,139,250,0.3);
+      cursor: pointer;
+      transition: background 200ms;
+    }
+    .emu-dot.active { background: #a78bfa; border-color: #a78bfa; }
+
+    /* Tooltip */
+    .sms-embed-wrap { position: relative; }
+    .emu-tooltip {
+      display: none;
+      position: absolute;
+      inset: 0;
+      z-index: 10;
+      background: rgba(5,4,18,0.93);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-radius: 8px;
+      padding: 1rem;
+      overflow-y: auto;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+    .emu-tooltip.visible { display: flex; }
+    .emu-tooltip-title {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 0.8rem;
+      color: #c4b5fd;
+      font-weight: 600;
+      line-height: 1.4;
+    }
+    .emu-tooltip-controls {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 0.3rem 1rem;
+    }
+    .emu-ctrl-row {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 0.72rem; color: rgba(196,181,253,0.75);
+    }
+    .emu-ctrl-btn {
+      background: rgba(99,63,210,0.25);
+      border: 1px solid rgba(167,139,250,0.2);
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 0.7rem;
+      color: #c4b5fd;
+      font-family: monospace;
+    }
 </style>
 </head>
 <body>
@@ -650,16 +736,31 @@
       </div>
     </div>
 
-    <!-- ── SEGA MASTER SYSTEM MARK III BIOS (decorative) ── -->
-    <div class="sms-glass" aria-label="Sega Master System Mark III BIOS">
-      <div class="toc-title" style="margin-bottom:0.6rem;">
-        <svg width="12" height="12" viewBox="0 0 12 12" style="vertical-align:middle;margin-right:4px"><circle cx="6" cy="6" r="5" fill="none" stroke="#a78bfa" stroke-width="1.2"/><circle cx="6" cy="6" r="2" fill="#a78bfa"/></svg>
-        Sega CD BIOS
+    <!-- ── EMULATOR CAROUSEL ── -->
+    <div class="sms-glass emu-carousel" id="emuCarousel" aria-label="Emulator carousel">
+      <div class="emu-header">
+        <button class="emu-arrow emu-prev" id="emuPrev" aria-label="Previous">&#8592;</button>
+        <div class="toc-title emu-title" id="emuTitle">
+          <svg width="12" height="12" viewBox="0 0 12 12" style="vertical-align:middle;margin-right:4px"><circle cx="6" cy="6" r="5" fill="none" stroke="#a78bfa" stroke-width="1.2"/><circle cx="6" cy="6" r="2" fill="#a78bfa"/></svg>
+          <span id="emuTitleText">Sega CD BIOS</span>
+        </div>
+        <button class="emu-arrow emu-next" id="emuNext" aria-label="Next">&#8594;</button>
       </div>
-      <div class="sms-embed-wrap">
+      <div class="sms-embed-wrap" id="emuWrap">
         <div id="sms-game" style="width:100%;height:100%;"></div>
+        <!-- Hover tooltip -->
+        <div class="emu-tooltip" id="emuTooltip">
+          <div class="emu-tooltip-title">Psst, hey! Did you know you can actually control this emulator? Here are the controls:</div>
+          <div class="emu-tooltip-controls" id="emuTooltipControls"></div>
+        </div>
       </div>
-      <p class="sms-note">Sega CD US v2.11x · 1993 · Genesis Plus GX · 128KB</p>
+      <p class="sms-note" id="emuNote">Sega CD US v2.11x · 1993 · Genesis Plus GX · 128KB</p>
+      <!-- Dots indicator -->
+      <div class="emu-dots">
+        <span class="emu-dot active" data-idx="0"></span>
+        <span class="emu-dot" data-idx="1"></span>
+        <span class="emu-dot" data-idx="2"></span>
+      </div>
     </div>
 
   </div><!-- /toc-row -->
@@ -943,34 +1044,126 @@
 }());
 </script>
 
-<!-- EmulatorJS — Sega CD US v2.11x BIOS decorativo -->
+<!-- EmulatorJS Carousel -->
+<script src="https://cdn.emulatorjs.org/stable/data/loader.js" id="ejsLoader"></script>
 <script>
-  if (!window._ejsLoaded) {
-    window._ejsLoaded = true;
+(function() {
+  var EMULATORS = [
+    {
+      title: 'Sega CD BIOS',
+      note:  'Sega CD US v2.11x \u00b7 1993 \u00b7 Genesis Plus GX \u00b7 128KB',
+      core:  'segaCD',
+      gameUrl: '/bios.bin',
+      biosUrl: '/bios.bin',
+      gameName:'bios.bin',
+      controls: [
+        ['A','Z'],['B','X'],['C','C'],['X','A'],['Y','S'],['Z','D'],
+        ['START','Enter'],['MODE','P'],['L','Q'],['R','W'],
+        ['\u2191','\u2191'],['\u2193','\u2193'],['\u2190','\u2190'],['\u2192','\u2192']
+      ]
+    },
+    {
+      title: 'Nintendo 64',
+      note:  'Super Mario 64 \u00b7 1996 \u00b7 Mupen64Plus \u00b7 N64',
+      core:  'n64',
+      gameUrl: '/bios.z64',
+      biosUrl: '',
+      gameName:'bios.z64',
+      controls: [
+        ['A','Z'],['B','X'],['Z Trig','S'],['START','Enter'],
+        ['L','Q'],['R','W'],['C\u2191','T'],['C\u2193','G'],['C\u2190','F'],['C\u2192','H'],
+        ['\u2191','\u2191'],['\u2193','\u2193'],['\u2190','\u2190'],['\u2192','\u2192']
+      ]
+    },
+    {
+      title: 'Satellaview BS-X',
+      note:  'Satellaview BS-X \u00b7 1995 \u00b7 Snes9x \u00b7 SNES',
+      core:  'snes9x',
+      gameUrl: '/bios.sfc',
+      biosUrl: '',
+      gameName:'bios.sfc',
+      controls: [
+        ['A','Z'],['B','X'],['X Btn','A'],['Y','S'],
+        ['L','Q'],['R','W'],['START','Enter'],['SELECT','P'],
+        ['\u2191','\u2191'],['\u2193','\u2193'],['\u2190','\u2190'],['\u2192','\u2192']
+      ]
+    }
+  ];
 
-    EJS_player        = '#sms-game';
-    EJS_core          = 'segaCD';
-    EJS_pathtodata    = 'https://cdn.emulatorjs.org/stable/data/';
-    EJS_biosUrl       = '/bios.bin';
-    EJS_gameUrl       = '/bios.bin';
-    EJS_gameName      = 'bios.bin';
-    EJS_startOnLoaded = true;
-    EJS_volume        = 0;       // Muted until first user interaction (autoplay policy)
-    EJS_color         = '#a78bfa';
-    EJS_mobileControls = false;
+  var current = 0;
+  var hoverTimer = null;
+  var HOVER_DELAY = 3000; // 3 seconds
 
-    EJS_Buttons = {
-      playPause: false, restart: false, mute: false,
-      settings: false, fullscreen: false, saveState: false,
-      loadState: false, screenRecord: false, gamepad: false,
-      cheat: false, volume: false, saveSavFiles: false,
-      loadSavFiles: false, quickSave: false, quickLoad: false,
-      screenshot: false, cacheManager: false, exitEmulation: false,
+  function buildTooltip(idx) {
+    var ctrl = EMULATORS[idx].controls;
+    var html = '';
+    ctrl.forEach(function(c) {
+      html += '<div class="emu-ctrl-row"><span>' + c[0] + '</span><span class="emu-ctrl-btn">' + c[1] + '</span></div>';
+    });
+    document.getElementById('emuTooltipControls').innerHTML = html;
+  }
+
+  function hideTooltip() {
+    document.getElementById('emuTooltip').classList.remove('visible');
+  }
+
+  function loadEmulator(idx) {
+    // Update UI
+    document.getElementById('emuTitleText').textContent = EMULATORS[idx].title;
+    document.getElementById('emuNote').textContent       = EMULATORS[idx].note;
+    document.querySelectorAll('.emu-dot').forEach(function(d, i) {
+      d.classList.toggle('active', i === idx);
+    });
+    hideTooltip();
+    buildTooltip(idx);
+
+    // Destroy previous instance
+    if (window.EJS_emulator) {
+      try { EJS_emulator.pause(); } catch(e) {}
+      try { EJS_emulator.exit(); } catch(e) {}
+      window.EJS_emulator = null;
+    }
+
+    // Reset the container
+    var wrap = document.getElementById('emuWrap');
+    var tooltip = wrap.querySelector('.emu-tooltip');
+    var oldGame = document.getElementById('sms-game');
+    if (oldGame) oldGame.remove();
+    var newGame = document.createElement('div');
+    newGame.id = 'sms-game';
+    newGame.style.cssText = 'width:100%;height:100%;';
+    wrap.insertBefore(newGame, tooltip);
+
+    // Set global EJS vars
+    var emu = EMULATORS[idx];
+    window.EJS_player        = '#sms-game';
+    window.EJS_core          = emu.core;
+    window.EJS_pathtodata    = 'https://cdn.emulatorjs.org/stable/data/';
+    window.EJS_gameUrl       = emu.gameUrl;
+    window.EJS_gameName      = emu.gameName;
+    window.EJS_biosUrl       = emu.biosUrl || undefined;
+    window.EJS_startOnLoaded = true;
+    window.EJS_volume        = 0;
+    window.EJS_color         = '#a78bfa';
+    window.EJS_mobileControls = false;
+    window.EJS_Buttons = {
+      playPause:false,restart:false,mute:false,settings:false,fullscreen:false,
+      saveState:false,loadState:false,screenRecord:false,gamepad:false,cheat:false,
+      volume:false,saveSavFiles:false,loadSavFiles:false,quickSave:false,
+      quickLoad:false,screenshot:false,cacheManager:false,exitEmulation:false,
     };
+    window.EJS_VirtualGamepadSettings = { buttons: [], sticks: [] };
 
-    // On first user interaction anywhere on page → unmute + resume AudioContext
+    // Re-run loader
+    var old = document.getElementById('ejsLoader');
+    if (old) old.remove();
+    var s = document.createElement('script');
+    s.id  = 'ejsLoader';
+    s.src = 'https://cdn.emulatorjs.org/stable/data/loader.js?t=' + Date.now();
+    document.body.appendChild(s);
+
+    // Audio unlock on first interaction
     function unlockAudio() {
-      // Set volume via EmulatorJS API
       if (window.EJS_emulator) {
         try { EJS_emulator.setVolume(1); } catch(e) {}
         try {
@@ -978,40 +1171,75 @@
           if (ac && ac.state === 'suspended') ac.resume();
         } catch(e) {}
       }
-      document.removeEventListener('click',      unlockAudio);
-      document.removeEventListener('touchstart', unlockAudio);
-      document.removeEventListener('keydown',    unlockAudio);
-      document.removeEventListener('scroll',     unlockAudio);
     }
     document.addEventListener('click',      unlockAudio, { once: true });
     document.addEventListener('touchstart', unlockAudio, { once: true, passive: true });
-    document.addEventListener('keydown',    unlockAudio, { once: true });
     document.addEventListener('scroll',     unlockAudio, { once: true, passive: true });
+    document.addEventListener('keydown',    unlockAudio, { once: true });
 
-    // Hide all UI chrome + virtual gamepad
-    window.addEventListener('load', function() {
-      var HIDE = [
-        '.ejs_virtualGamepad_parent', '.ejs_virtualGamepad', '.ejs_gamepad',
-        '[class*="virtualGamepad"]', '[class*="nipple"]',
-        '.ejs_menu_bar', '.ejs_menu', '.ejs_settings', '.ejs_context_menu',
-        '.ejs_fast_forward', '.ejs_slow_motion', '#ejs_settings_button',
-        '.nipple', '.nipple_manager', '.back', '.front',
-      ];
-      function hideUI() {
-        HIDE.forEach(function(sel) {
-          document.querySelectorAll(sel).forEach(function(el) {
-            el.style.cssText += ';display:none!important;visibility:hidden!important;pointer-events:none!important;';
-          });
+    // Hide UI chrome
+    setTimeout(function hideUI() {
+      var HIDE = ['.ejs_virtualGamepad_parent','.ejs_virtualGamepad','.ejs_gamepad',
+        '[class*="virtualGamepad"]','[class*="nipple"]','.ejs_menu_bar','.ejs_menu',
+        '.ejs_settings','.ejs_context_menu','.ejs_fast_forward','.ejs_slow_motion',
+        '#ejs_settings_button','.nipple','.nipple_manager','.back','.front'];
+      HIDE.forEach(function(sel) {
+        document.querySelectorAll(sel).forEach(function(el) {
+          el.style.cssText += ';display:none!important;visibility:hidden!important;pointer-events:none!important;';
         });
-      }
-      new MutationObserver(hideUI).observe(document.body, { childList: true, subtree: true });
-      setTimeout(hideUI, 500);
-      setTimeout(hideUI, 2000);
-      setTimeout(hideUI, 4000);
-    });
+      });
+    }, 1000);
   }
+
+  // Arrow buttons
+  document.getElementById('emuPrev').addEventListener('click', function() {
+    current = (current - 1 + EMULATORS.length) % EMULATORS.length;
+    loadEmulator(current);
+  });
+  document.getElementById('emuNext').addEventListener('click', function() {
+    current = (current + 1) % EMULATORS.length;
+    loadEmulator(current);
+  });
+
+  // Dot navigation
+  document.querySelectorAll('.emu-dot').forEach(function(dot) {
+    dot.addEventListener('click', function() {
+      current = parseInt(this.getAttribute('data-idx'));
+      loadEmulator(current);
+    });
+  });
+
+  // Hover tooltip — show after 3s of mouse staying on embed
+  var wrap = document.getElementById('emuWrap');
+  wrap.addEventListener('mouseenter', function() {
+    hoverTimer = setTimeout(function() {
+      document.getElementById('emuTooltip').classList.add('visible');
+    }, HOVER_DELAY);
+  });
+  wrap.addEventListener('mouseleave', function() {
+    clearTimeout(hoverTimer);
+    hideTooltip();
+  });
+
+  // Init MutationObserver for UI hiding
+  new MutationObserver(function() {
+    var HIDE = ['.ejs_virtualGamepad_parent','.ejs_virtualGamepad','.ejs_gamepad',
+      '[class*="virtualGamepad"]','[class*="nipple"]','.ejs_menu_bar','.ejs_menu',
+      '.ejs_settings','.ejs_fast_forward','#ejs_settings_button','.nipple','.nipple_manager'];
+    HIDE.forEach(function(sel) {
+      document.querySelectorAll(sel).forEach(function(el) {
+        el.style.display = 'none';
+        el.style.visibility = 'hidden';
+        el.style.pointerEvents = 'none';
+      });
+    });
+  }).observe(document.body, { childList: true, subtree: true });
+
+  // Load first emulator
+  buildTooltip(0);
+  loadEmulator(0);
+})();
 </script>
-<script src="https://cdn.emulatorjs.org/stable/data/loader.js"></script>
 <script src="https://cdn.emulatorjs.org/stable/data/loader.js"></script>
 
 </body>
