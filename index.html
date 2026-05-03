@@ -247,6 +247,7 @@
     .toc-row {
       display: flex; align-items: flex-start; gap: 1rem;
       flex-wrap: wrap; margin: 2rem 0;
+      justify-content: center;
     }
     .toc-glass { margin: 0; }
 
@@ -658,6 +659,7 @@
       <div class="sms-embed-wrap">
         <div id="sms-game" style="width:100%;height:100%;"></div>
       </div>
+      <p class="sms-note">Sega CD US v2.11x · 1993 · Genesis Plus GX · 128KB</p>
     </div>
 
   </div><!-- /toc-row -->
@@ -970,7 +972,7 @@
     function unlockAudio() {
       // Set volume via EmulatorJS API
       if (window.EJS_emulator) {
-        try { EJS_emulator.setVolume(30); } catch(e) {}
+        try { EJS_emulator.setVolume(1); } catch(e) {}
         try {
           var ac = EJS_emulator.gameManager && EJS_emulator.gameManager.audioContext;
           if (ac && ac.state === 'suspended') ac.resume();
