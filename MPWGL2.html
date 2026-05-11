@@ -14,7 +14,11 @@ body{height:100dvh;max-height:100dvh;font-family:'Inter',sans-serif;font-size:cl
 button{cursor:pointer;background:none;border:none;font:inherit;color:inherit}
 input,select{font:inherit;color:inherit}
 #neural{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none}
-.page-wrapper{position:relative;z-index:1;flex:1;min-height:0;display:grid;grid-template-columns:320px 1fr;overflow:hidden;}.left-col{display:flex;flex-direction:column;overflow:hidden;border-right:1px solid rgba(167,139,250,.1);}.left-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:.45rem .65rem .5rem .7rem;display:flex;flex-direction:column;gap:.32rem;scrollbar-width:thin;scrollbar-color:rgba(167,139,250,.15) transparent;}.left-scroll::-webkit-scrollbar{width:3px}.left-scroll::-webkit-scrollbar-thumb{background:rgba(167,139,250,.15);border-radius:3px}.right-col{display:flex;flex-direction:column;overflow:hidden;padding:.45rem .6rem .45rem .5rem;gap:.38rem;}
+.page-wrapper{position:relative;z-index:1;flex:1;min-height:0;display:grid;grid-template-columns:320px 1fr;overflow:hidden;}
+.left-col{display:flex;flex-direction:column;overflow:hidden;border-right:1px solid rgba(167,139,250,.1);}
+.left-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:.45rem .65rem .5rem .7rem;display:flex;flex-direction:column;gap:.28rem;scrollbar-width:thin;scrollbar-color:rgba(167,139,250,.15) transparent;}
+.left-scroll::-webkit-scrollbar{width:3px}.left-scroll::-webkit-scrollbar-thumb{background:rgba(167,139,250,.15);border-radius:3px}
+.right-col{display:flex;flex-direction:column;overflow:hidden;padding:.45rem .6rem .45rem .5rem;gap:.38rem;}
 nav{position:sticky;top:0;z-index:100;backdrop-filter:blur(18px) saturate(160%);-webkit-backdrop-filter:blur(18px) saturate(160%);background:rgba(10,8,32,.6);border-bottom:1px solid rgba(167,139,250,.12)}
 .nav-inner{max-width:1140px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;padding:.45rem clamp(.6rem,2vw,1.5rem)}
 .nav-logo{display:flex;align-items:center;gap:.6rem;font-family:'Space Grotesk',sans-serif;font-size:1.1rem;font-weight:700;color:#c4b5fd;text-decoration:none;letter-spacing:-.01em}
@@ -40,89 +44,86 @@ nav{position:sticky;top:0;z-index:100;backdrop-filter:blur(18px) saturate(160%);
 .wiki-divider{border:none;border-top:1px solid rgba(167,139,250,.18);margin:.3rem 0}
 .glass{background:rgba(255,255,255,.03);border:1px solid rgba(167,139,250,.15);border-radius:12px;backdrop-filter:blur(12px)}
 .player-shell{display:contents}
-.player-shell::-webkit-scrollbar{width:3px}
-.player-shell::-webkit-scrollbar-thumb{background:rgba(167,139,250,.15);border-radius:3px}
-/* No upload zone — drag only */
 .parse-bar-wrap{display:none;flex-direction:column;gap:.3rem}
 .parse-bar-wrap.on{display:flex}
 .parse-info{display:flex;justify-content:space-between;font-size:.68rem;color:rgba(196,181,253,.38)}
 .parse-track{width:100%;height:5px;background:rgba(167,139,250,.1);border-radius:999px;overflow:hidden}
 .parse-fill{height:100%;background:linear-gradient(90deg,#6d3fd6,#a78bfa);border-radius:999px;transition:width 100ms linear}
-.file-bar{display:flex;visibility:hidden;align-items:center;gap:.55rem;background:rgba(99,63,210,.1);border:1px solid rgba(167,139,250,.17);border-radius:8px;padding:.42rem .75rem}
+.file-bar{display:flex;visibility:hidden;align-items:center;gap:.55rem;background:rgba(99,63,210,.1);border:1px solid rgba(167,139,250,.17);border-radius:8px;padding:.38rem .65rem}
 .file-bar.on{visibility:visible}
-.file-name{font-size:.78rem;font-weight:600;color:#c4b5fd;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.file-notes-lbl{font-size:.66rem;color:rgba(196,181,253,.38);white-space:nowrap}
-.badge-sm{font-size:.63rem;font-weight:700;letter-spacing:.05em;padding:.13rem .42rem;border-radius:5px;border:1px solid rgba(167,139,250,.18);background:rgba(99,63,210,.12);color:#a78bfa;white-space:nowrap}
-.btn-xs{width:22px;height:22px;border-radius:5px;background:rgba(167,139,250,.07);border:1px solid rgba(167,139,250,.13);display:flex;align-items:center;justify-content:center;color:rgba(196,181,253,.5);transition:background 130ms;flex-shrink:0;font-size:.72rem}
+.file-name{font-size:.76rem;font-weight:600;color:#c4b5fd;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-notes-lbl{font-size:.63rem;color:rgba(196,181,253,.38);white-space:nowrap}
+.badge-sm{font-size:.6rem;font-weight:700;letter-spacing:.05em;padding:.1rem .35rem;border-radius:5px;border:1px solid rgba(167,139,250,.18);background:rgba(99,63,210,.12);color:#a78bfa;white-space:nowrap}
+.btn-xs{width:20px;height:20px;border-radius:5px;background:rgba(167,139,250,.07);border:1px solid rgba(167,139,250,.13);display:flex;align-items:center;justify-content:center;color:rgba(196,181,253,.5);transition:background 130ms;flex-shrink:0;font-size:.68rem}
 .btn-xs:hover{background:rgba(167,139,250,.18);color:#c4b5fd}
 /* Live stats */
-.live-row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:.38rem}
-.live-card{background:rgba(255,255,255,.025);border:1px solid rgba(167,139,250,.1);border-radius:7px;padding:.3rem .5rem;display:flex;flex-direction:column;gap:.05rem}
-.live-lbl{font-size:.58rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:rgba(196,181,253,.3)}
-.live-val{font-family:'Space Grotesk',sans-serif;font-size:.92rem;font-weight:700;color:#c4b5fd;font-variant-numeric:tabular-nums;line-height:1.05}
-.live-unit{font-size:.58rem;color:rgba(196,181,253,.28)}
-.roll-label{font-size:.64rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:rgba(196,181,253,.3)}
+.live-row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:.32rem}
+.live-card{background:rgba(255,255,255,.025);border:1px solid rgba(167,139,250,.1);border-radius:7px;padding:.28rem .45rem;display:flex;flex-direction:column;gap:.04rem}
+.live-lbl{font-size:.55rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:rgba(196,181,253,.3)}
+.live-val{font-family:'Space Grotesk',sans-serif;font-size:.88rem;font-weight:700;color:#c4b5fd;font-variant-numeric:tabular-nums;line-height:1.05}
+.live-unit{font-size:.55rem;color:rgba(196,181,253,.28)}
+.roll-label{font-size:.62rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:rgba(196,181,253,.3)}
 /* Piano roll */
-.roll-wrap{position:relative;width:100%;flex:1;min-height:0;border-radius:8px;overflow:hidden;background:transparent}
+.roll-wrap{position:relative;width:100%;flex:1;min-height:0;border-radius:8px;overflow:hidden;background:transparent;cursor:pointer}
 #rollCanvas{display:block;width:100%;height:100%;background:transparent}
 .roll-overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.5rem;color:rgba(196,181,253,.25);font-size:.78rem;transition:opacity 200ms}
 .roll-overlay.hidden{opacity:0;pointer-events:none}
 .overlay-icon{font-size:1.8rem;opacity:.35}
 /* Transport */
-.transport{display:flex;align-items:center;gap:.55rem;flex-wrap:wrap}
-.btn-play{width:34px;height:34px;border-radius:8px;background:linear-gradient(135deg,#6d3fd6,#a78bfa);color:#fff;font-size:.9rem;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:opacity 150ms,transform 100ms}
+.transport{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+.btn-play{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#6d3fd6,#a78bfa);color:#fff;font-size:.85rem;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:opacity 150ms,transform 100ms}
 .btn-play:hover{opacity:.85;transform:scale(1.05)}
-.btn-stop{width:28px;height:28px;border-radius:6px;background:rgba(167,139,250,.1);border:1px solid rgba(167,139,250,.2);color:rgba(196,181,253,.7);font-size:.7rem;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.btn-stop{width:26px;height:26px;border-radius:6px;background:rgba(167,139,250,.1);border:1px solid rgba(167,139,250,.2);color:rgba(196,181,253,.7);font-size:.68rem;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .btn-stop:hover{background:rgba(167,139,250,.2)}
-.progress-wrap{flex:1;display:flex;flex-direction:column;gap:.25rem;min-width:0}
-.progress-track{height:5px;background:rgba(167,139,250,.12);border-radius:999px;cursor:default;position:relative;overflow:hidden}
+.progress-wrap{flex:1;display:flex;flex-direction:column;gap:.22rem;min-width:0}
+.progress-track{height:4px;background:rgba(167,139,250,.12);border-radius:999px;cursor:default;position:relative;overflow:hidden}
 .progress-fill{height:100%;background:linear-gradient(90deg,#6d3fd6,#a78bfa);border-radius:999px;pointer-events:none}
-.time-row{display:flex;justify-content:space-between;font-size:.6rem;color:rgba(196,181,253,.3);font-variant-numeric:tabular-nums}
-.vol-wrap{display:flex;align-items:center;gap:.38rem;flex-shrink:0}
-.vol{-webkit-appearance:none;appearance:none;width:62px;height:3px;border-radius:999px;background:rgba(167,139,250,.2);outline:none;cursor:pointer}
-.vol::-webkit-slider-thumb{-webkit-appearance:none;width:11px;height:11px;border-radius:50%;background:#a78bfa}
-.speed-row{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
-.speed-lbl{font-size:.66rem;color:rgba(196,181,253,.38);white-space:nowrap}
-.speed{-webkit-appearance:none;appearance:none;flex:1;height:3px;border-radius:999px;background:rgba(167,139,250,.18);outline:none;cursor:pointer;min-width:80px}
-.speed::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:#a78bfa}
-.speed-val{font-size:.66rem;color:#a78bfa;font-variant-numeric:tabular-nums;white-space:nowrap;min-width:3ch}
+.time-row{display:flex;justify-content:space-between;font-size:.58rem;color:rgba(196,181,253,.3);font-variant-numeric:tabular-nums}
+.vol-wrap{display:flex;align-items:center;gap:.35rem;flex-shrink:0}
+.vol{-webkit-appearance:none;appearance:none;width:58px;height:3px;border-radius:999px;background:rgba(167,139,250,.2);outline:none;cursor:pointer}
+.vol::-webkit-slider-thumb{-webkit-appearance:none;width:10px;height:10px;border-radius:50%;background:#a78bfa}
+.speed-row{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+.speed-lbl{font-size:.62rem;color:rgba(196,181,253,.38);white-space:nowrap}
+.speed{-webkit-appearance:none;appearance:none;flex:1;height:3px;border-radius:999px;background:rgba(167,139,250,.18);outline:none;cursor:pointer;min-width:70px}
+.speed::-webkit-slider-thumb{-webkit-appearance:none;width:11px;height:11px;border-radius:50%;background:#a78bfa}
+.speed-val{font-size:.62rem;color:#a78bfa;font-variant-numeric:tabular-nums;white-space:nowrap;min-width:3ch}
 /* Channel chips */
-.ch-legend{display:flex;flex-wrap:wrap;gap:.28rem}
-.ch-chip{display:inline-flex;align-items:center;gap:.28rem;font-size:.62rem;font-weight:600;padding:.15rem .45rem;border-radius:5px;border:1px solid;letter-spacing:.02em;cursor:pointer;transition:opacity 120ms}
+.ch-legend{display:flex;flex-wrap:wrap;gap:.25rem}
+.ch-chip{display:inline-flex;align-items:center;gap:.25rem;font-size:.6rem;font-weight:600;padding:.12rem .38rem;border-radius:5px;border:1px solid;letter-spacing:.02em;cursor:pointer;transition:opacity 120ms}
 .ch-chip:hover{opacity:.7}
-.ch-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.ch-dot{width:5px;height:5px;border-radius:50%;flex-shrink:0}
 /* MIDI */
-.midi-out-section{display:flex;flex-direction:column;gap:.45rem}
-.midi-out-tabs{display:flex;gap:.25rem}
-.midi-tab{font-size:.68rem;font-weight:700;padding:.22rem .58rem;border-radius:6px;border:1px solid rgba(167,139,250,.18);background:rgba(99,63,210,.08);color:rgba(196,181,253,.45);transition:background 130ms,border-color 130ms,color 130ms;letter-spacing:.03em}
+.midi-out-section{display:flex;flex-direction:column;gap:.38rem}
+.midi-out-tabs{display:flex;gap:.22rem}
+.midi-tab{font-size:.64rem;font-weight:700;padding:.2rem .52rem;border-radius:6px;border:1px solid rgba(167,139,250,.18);background:rgba(99,63,210,.08);color:rgba(196,181,253,.45);transition:background 130ms,border-color 130ms,color 130ms;letter-spacing:.03em}
 .midi-tab.active,.midi-tab:hover{background:rgba(99,63,210,.28);border-color:rgba(167,139,250,.4);color:#c4b5fd}
-.midi-panel{display:none;flex-direction:column;gap:.4rem}
+.midi-panel{display:none;flex-direction:column;gap:.35rem}
 .midi-panel.on{display:flex}
-.midi-row{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap}
-.midi-status{font-size:.66rem;font-weight:600;padding:.18rem .5rem;border-radius:5px;border:1px solid;white-space:nowrap}
+.midi-row{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
+.midi-status{font-size:.63rem;font-weight:600;padding:.15rem .45rem;border-radius:5px;border:1px solid;white-space:nowrap}
 .midi-status.idle{background:rgba(167,139,250,.07);border-color:rgba(167,139,250,.18);color:rgba(196,181,253,.4)}
 .midi-status.ok{background:rgba(52,211,153,.07);border-color:rgba(52,211,153,.25);color:#34d399}
 .midi-status.err{background:rgba(251,113,133,.07);border-color:rgba(251,113,133,.22);color:#fb7185}
-.btn-md{font-size:.68rem;font-weight:600;padding:.25rem .62rem;border-radius:6px;border:1px solid rgba(167,139,250,.22);background:rgba(99,63,210,.12);color:#a78bfa;transition:background 120ms;white-space:nowrap;cursor:pointer}
+.btn-md{font-size:.64rem;font-weight:600;padding:.22rem .56rem;border-radius:6px;border:1px solid rgba(167,139,250,.22);background:rgba(99,63,210,.12);color:#a78bfa;transition:background 120ms;white-space:nowrap;cursor:pointer}
 .btn-md:hover{background:rgba(99,63,210,.28)}
 .btn-md:disabled{opacity:.35;cursor:not-allowed}
-.midi-sel{font-size:.68rem;padding:.25rem .5rem;border-radius:6px;border:1px solid rgba(167,139,250,.2);background:rgba(10,8,30,.7);color:#c4b5fd;flex:1;min-width:0}
-.midi-note{font-size:.66rem;color:rgba(196,181,253,.35);line-height:1.55;padding:.35rem .6rem;background:rgba(99,63,210,.06);border-radius:6px;border:1px solid rgba(167,139,250,.1)}
-/* Keyboard — Synthesia height */
+.midi-sel{font-size:.64rem;padding:.22rem .45rem;border-radius:6px;border:1px solid rgba(167,139,250,.2);background:rgba(10,8,30,.7);color:#c4b5fd;flex:1;min-width:0}
+.midi-note{font-size:.62rem;color:rgba(196,181,253,.35);line-height:1.5;padding:.3rem .55rem;background:rgba(99,63,210,.06);border-radius:6px;border:1px solid rgba(167,139,250,.1)}
+/* Keyboard */
 .keys-wrap{width:100%;height:clamp(80px,8vh,120px);flex-shrink:0;border-radius:6px;overflow:hidden;background:#07071a}
 #keysCanvas{display:block;width:100%;height:100%}
-/* Stats grid */
-.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:.32rem}
-.stat-card{background:rgba(255,255,255,.02);border:1px solid rgba(167,139,250,.1);border-radius:6px;padding:.38rem .55rem}
-.stat-lbl{font-size:.56rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:rgba(196,181,253,.28);margin-bottom:.1rem}
-.stat-val{font-family:'Space Grotesk',sans-serif;font-size:.88rem;font-weight:700;color:#c4b5fd;font-variant-numeric:tabular-nums}
-.stat-unit{font-size:.56rem;color:rgba(196,181,253,.28)}
-/* Mini charts */
-.charts-row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:.3rem}
-.chart-box{position:relative;height:38px;border-radius:5px;overflow:hidden;background:rgba(255,255,255,.015);border:1px solid rgba(167,139,250,.08)}
+/* Stats grid — File Info compacto: 4 columnas, texto pequeño */
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:.22rem}
+.stat-card{background:rgba(255,255,255,.02);border:1px solid rgba(167,139,250,.1);border-radius:5px;padding:.28rem .42rem}
+.stat-lbl{font-size:.5rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:rgba(196,181,253,.28);margin-bottom:.06rem}
+.stat-val{font-family:'Space Grotesk',sans-serif;font-size:.78rem;font-weight:700;color:#c4b5fd;font-variant-numeric:tabular-nums}
+.stat-unit{font-size:.5rem;color:rgba(196,181,253,.28)}
+/* Mini charts — montaña, mismo ancho que NPS Timeline, apilados */
+.charts-col{display:flex;flex-direction:column;gap:.28rem}
+.chart-box{position:relative;height:52px;border-radius:6px;overflow:hidden;background:rgba(255,255,255,.015);border:1px solid rgba(167,139,250,.09);width:100%}
 .chart-box canvas{position:absolute;inset:0;width:100%!important;height:100%!important}
-.chart-lbl{position:absolute;top:2px;left:4px;font-size:.5rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:rgba(196,181,253,.32);pointer-events:none;z-index:1}
-.chart-val{position:absolute;top:2px;right:4px;font-size:.55rem;font-weight:700;color:rgba(196,181,253,.55);font-variant-numeric:tabular-nums;pointer-events:none;z-index:1}
+.chart-lbl{position:absolute;top:3px;left:5px;font-size:.52rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:rgba(196,181,253,.38);pointer-events:none;z-index:1}
+.chart-val{position:absolute;top:3px;right:5px;font-size:.58rem;font-weight:700;color:rgba(196,181,253,.6);font-variant-numeric:tabular-nums;pointer-events:none;z-index:1}
 /* Achievement toasts */
 #achieveContainer{position:absolute;top:8px;right:8px;z-index:50;display:flex;flex-direction:column;gap:.35rem;pointer-events:none}
 .ach-toast{background:linear-gradient(135deg,rgba(18,10,44,.97),rgba(45,22,88,.97));border:1px solid rgba(167,139,250,.4);border-radius:10px;padding:.42rem .7rem;min-width:155px;max-width:210px;box-shadow:0 4px 28px rgba(99,63,210,.65);opacity:0;transform:translateX(18px);transition:opacity 280ms,transform 280ms;pointer-events:auto;position:relative}
@@ -132,14 +133,14 @@ nav{position:sticky;top:0;z-index:100;backdrop-filter:blur(18px) saturate(160%);
 .ach-val{font-family:'Space Grotesk',sans-serif;font-size:.92rem;font-weight:800;color:#fff}
 .ach-sub{font-size:.55rem;color:rgba(196,181,253,.5);margin-top:.08rem}
 .ach-x{position:absolute;top:4px;right:6px;font-size:.62rem;color:rgba(196,181,253,.38);cursor:pointer;pointer-events:auto}
-/* Color picker popup */
-#cpPop{display:none;position:fixed;z-index:9000;background:rgba(12,8,32,.97);border:1px solid rgba(167,139,250,.3);border-radius:11px;padding:9px 11px;box-shadow:0 8px 40px rgba(0,0,0,.72);flex-direction:column;gap:6px;min-width:192px}
+/* Color picker popup — 4x4 grid */
+#cpPop{display:none;position:fixed;z-index:9000;background:rgba(12,8,32,.97);border:1px solid rgba(167,139,250,.3);border-radius:14px;padding:10px 12px;box-shadow:0 8px 40px rgba(0,0,0,.72);flex-direction:column;gap:8px;min-width:180px}
 #cpPop.show{display:flex}
 .cp-hdr{font-size:.55rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:rgba(196,181,253,.38)}
-.cp-swatches{display:flex;gap:.3rem;flex-wrap:wrap}
-.cp-sw{width:16px;height:16px;border-radius:4px;border:2px solid rgba(167,139,250,.22);cursor:pointer;flex-shrink:0;transition:transform 80ms}
-.cp-sw:hover{transform:scale(1.22)}
-.cp-custom{width:22px;height:22px;padding:0;border:2px solid rgba(167,139,250,.2);border-radius:4px;cursor:pointer;background:none}
+.cp-swatches{display:grid;grid-template-columns:repeat(4,1fr);gap:5px}
+.cp-sw{width:100%;aspect-ratio:1;border-radius:6px;border:2px solid rgba(167,139,250,.18);cursor:pointer;transition:transform 80ms,border-color 120ms}
+.cp-sw:hover{transform:scale(1.15);border-color:rgba(196,181,253,.55)}
+.cp-custom{width:26px;height:26px;padding:0;border:2px solid rgba(167,139,250,.2);border-radius:5px;cursor:pointer;background:none}
 /* Toast */
 #toast{position:fixed;bottom:1rem;left:50%;transform:translateX(-50%) translateY(1.8rem);background:rgba(12,8,32,.97);border:1px solid rgba(167,139,250,.22);border-radius:8px;padding:.38rem .85rem;font-size:.7rem;color:#c4b5fd;box-shadow:0 6px 32px rgba(0,0,0,.6);opacity:0;transition:opacity 250ms,transform 250ms;pointer-events:none;z-index:9999;white-space:nowrap}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
@@ -148,14 +149,16 @@ nav{position:sticky;top:0;z-index:100;backdrop-filter:blur(18px) saturate(160%);
 footer{padding:.25rem 0 .35rem;text-align:center;font-size:.65rem;color:rgba(196,181,253,.2)}
 footer a{color:rgba(167,139,250,.45);text-decoration:none}
 footer a:hover{color:#a78bfa}
-@media(max-width:900px){.page-wrapper{grid-template-columns:1fr}.left-col{max-height:55vh}.nav-links{display:none}.mob-hamburger{display:flex}}@media(max-width:700px){.live-row{grid-template-columns:1fr 1fr}.stats-grid{grid-template-columns:1fr 1fr}.charts-row{grid-template-columns:1fr 1fr}.vol-wrap{display:none}}@media(max-width:440px){.stats-grid{grid-template-columns:1fr 1fr}}
-/* ── Two-column layout fixes ── */
+@media(max-width:900px){.page-wrapper{grid-template-columns:1fr}.left-col{max-height:55vh}.nav-links{display:none}.mob-hamburger{display:flex}}
+@media(max-width:700px){.live-row{grid-template-columns:1fr 1fr}.stats-grid{grid-template-columns:1fr 1fr}.vol-wrap{display:none}}
+@media(max-width:440px){.stats-grid{grid-template-columns:1fr 1fr}}
+/* Layout fixes */
 .left-col .glass{border:none;border-radius:0;background:rgba(255,255,255,.025);backdrop-filter:none}
 .right-col .roll-wrap{border-radius:8px}
 .right-col{background:transparent}
-/* hero compact */
-.hero{padding:.18rem 0 .05rem;flex-shrink:0}
-
+.hero{padding:.15rem 0 .04rem;flex-shrink:0}
+/* Roll click hint */
+.roll-click-hint{position:absolute;bottom:6px;left:50%;transform:translateX(-50%);font-size:.6rem;color:rgba(196,181,253,.25);pointer-events:none;white-space:nowrap;transition:opacity 400ms}
 </style>
 </head>
 <body>
@@ -197,168 +200,150 @@ footer a:hover{color:#a78bfa}
 
 <div class="page-wrapper">
 <div class="left-col"><div class="left-scroll glass">
-  <section class="hero" style="padding:.25rem 0 .1rem">
+  <section class="hero" style="padding:.2rem 0 .08rem">
     <div class="hero-badge"><span></span>Black MIDI Player</div>
   </section>
 
+  <!-- Parse bar -->
+  <div class="parse-bar-wrap" id="parseBarWrap">
+    <div class="parse-info"><span id="parsePhase">Parsing…</span><span id="parseCount"></span></div>
+    <div class="parse-track"><div class="parse-fill" id="parseFill" style="width:0%"></div></div>
+  </div>
 
-    <!-- Parse bar -->
-    <div class="parse-bar-wrap" id="parseBarWrap">
-      <div class="parse-info"><span id="parsePhase">Parsing…</span><span id="parseCount"></span></div>
-      <div class="parse-track"><div class="parse-fill" id="parseFill" style="width:0%"></div></div>
-    </div>
+  <!-- File bar -->
+  <div class="file-bar" id="fileBar">
+    <span style="color:#a78bfa;font-size:.85rem">🎹</span>
+    <span class="file-name" id="fileName">—</span>
+    <span class="file-notes-lbl" id="fileNotes"></span>
+    <span class="badge-sm" id="wglBadge">WebGL2</span>
+    <button class="btn-xs" id="btnClear" title="Clear">✕</button>
+  </div>
 
-    <!-- File bar -->
-    <div class="file-bar" id="fileBar">
-      <span style="color:#a78bfa;font-size:.88rem">🎹</span>
-      <span class="file-name" id="fileName">—</span>
-      <span class="file-notes-lbl" id="fileNotes"></span>
-      <span class="badge-sm" id="wglBadge">WebGL2</span>
-      <button class="btn-xs" id="btnClear" title="Clear">✕</button>
-    </div>
+  <!-- Live stats -->
+  <div class="live-row">
+    <div class="live-card"><div class="live-lbl">Active</div><div class="live-val" id="liveNotes">0</div></div>
+    <div class="live-card"><div class="live-lbl">NPS</div><div class="live-val" id="liveNps">0</div></div>
+    <div class="live-card"><div class="live-lbl">BPM</div><div class="live-val" id="liveBpm">—</div></div>
+    <div class="live-card"><div class="live-lbl">FPS</div><div class="live-val" id="liveFps">0</div></div>
+  </div>
 
-    <!-- Live stats -->
-    <div class="live-row">
-      <div class="live-card"><div class="live-lbl">Active Notes</div><div class="live-val" id="liveNotes">0</div></div>
-      <div class="live-card"><div class="live-lbl">Notes / sec</div><div class="live-val" id="liveNps">0</div></div>
-      <div class="live-card"><div class="live-lbl">Live BPM</div><div class="live-val" id="liveBpm">—</div></div>
-      <div class="live-card"><div class="live-lbl">FPS</div><div class="live-val" id="liveFps">0</div></div>
-    </div>
+  <div id="rollInfo" style="display:none"></div>
 
-    <!-- rollInfo for JS -->
-    <div id="rollInfo" style="display:none"></div>
-
-    <!-- Transport -->
-    <div class="transport">
-      <button class="btn-play" id="btnPlay" title="Play / Pause">▶</button>
-      <button class="btn-stop" id="btnStop" title="Stop">■</button>
-      <div class="progress-wrap">
-        <div class="progress-track" id="progressTrack" title="Seeking disabled">
-          <div class="progress-fill" id="progressFill" style="width:0%"></div>
-        </div>
-        <div class="time-row"><span id="tElapsed">0:00</span><span id="tTotal">0:00</span></div>
+  <!-- Transport -->
+  <div class="transport">
+    <button class="btn-play" id="btnPlay" title="Play / Pause">▶</button>
+    <button class="btn-stop" id="btnStop" title="Stop">■</button>
+    <div class="progress-wrap">
+      <div class="progress-track" id="progressTrack" title="Seeking disabled">
+        <div class="progress-fill" id="progressFill" style="width:0%"></div>
       </div>
-      <div class="vol-wrap">
-        <span style="font-size:.82rem">🔊</span>
-        <input type="range" class="vol" id="volSlider" min="0" max="100" value="80">
-      </div>
+      <div class="time-row"><span id="tElapsed">0:00</span><span id="tTotal">0:00</span></div>
     </div>
-
-    <!-- Speed -->
-    <div class="speed-row">
-      <span class="speed-lbl">Note Speed</span>
-      <input type="range" class="speed" id="speedSlider" min="0.5" max="8" step="0.1" value="3.5">
-      <span class="speed-val" id="speedVal">3.5s</span>
+    <div class="vol-wrap">
+      <span style="font-size:.8rem">🔊</span>
+      <input type="range" class="vol" id="volSlider" min="0" max="100" value="80">
     </div>
+  </div>
 
-    <!-- Channel legend -->
-    <div class="ch-legend" id="chLegend"></div>
+  <!-- Speed -->
+  <div class="speed-row">
+    <span class="speed-lbl">Speed</span>
+    <input type="range" class="speed" id="speedSlider" min="0.5" max="8" step="0.1" value="3.5">
+    <span class="speed-val" id="speedVal">3.5s</span>
+  </div>
 
-    <!-- Mini charts -->
-    <div class="charts-row">
-      <div class="chart-box"><canvas id="chartNps"></canvas><div class="chart-lbl">NPS</div><div class="chart-val" id="chartNpsVal">0</div></div>
-      <div class="chart-box"><canvas id="chartPoly"></canvas><div class="chart-lbl">Polyphony</div><div class="chart-val" id="chartPolyVal">0</div></div>
-      <div class="chart-box"><canvas id="chartBpm"></canvas><div class="chart-lbl">BPM</div><div class="chart-val" id="chartBpmVal">—</div></div>
-      <div class="chart-box"><canvas id="chartCC"></canvas><div class="chart-lbl">CC/s</div><div class="chart-val" id="chartCCVal">0</div></div>
-    </div>
+  <!-- Channel legend -->
+  <div class="ch-legend" id="chLegend"></div>
 
-    <!-- NPS Timeline -->
-    <div id="limitsChartSection" style="display:none">
-      <div class="roll-label" style="margin-bottom:.3rem">NPS Timeline</div>
-      <canvas id="limitsChart" height="52" style="width:100%;display:block;border-radius:6px;background:rgba(255,255,255,.018);border:1px solid rgba(167,139,250,.09)"></canvas>
-    </div>
+  <!-- NPS Timeline -->
+  <div id="limitsChartSection" style="display:none">
+    <div class="roll-label" style="margin-bottom:.25rem">NPS Timeline</div>
+    <canvas id="limitsChart" height="52" style="width:100%;display:block;border-radius:6px;background:rgba(255,255,255,.018);border:1px solid rgba(167,139,250,.09)"></canvas>
+  </div>
 
-    <!-- MIDI I/O -->
-    <div class="midi-out-section">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.35rem">
-        <div class="roll-label">MIDI I/O</div>
-        <div class="midi-out-tabs">
-          <button class="midi-tab active" id="tabWmidi">MIDI Out</button>
-          <button class="midi-tab" id="tabMidiIn">MIDI In</button>
-          <button class="midi-tab" id="tabNone">Off</button>
-        </div>
-      </div>
-      <div class="midi-panel on" id="panelWmidi">
-        <div class="midi-row">
-          <span class="midi-status idle" id="wmidiStatus">Not started</span>
-          <button class="btn-md" id="btnWmidiRequest">Request Access</button>
-          <select class="midi-sel" id="wmidiOutputSel"><option value="">— select output —</option></select>
-          <button class="btn-md" id="btnWmidiRefresh">↺</button>
-          <button class="btn-md" id="btnWmidiAllOff">All Off</button>
-        </div>
-        <div class="midi-note">Web MIDI API. Works with loopMIDI, VirtualMIDISynth, hardware ports.</div>
-      </div>
-      <div class="midi-panel" id="panelMidiIn">
-        <div class="midi-row">
-          <span class="midi-status idle" id="midiInStatus">Not started</span>
-          <button class="btn-md" id="btnMidiInRequest">Request access</button>
-          <select class="midi-sel" id="midiInSel"><option value="">— select input —</option></select>
-          <button class="btn-md" id="btnMidiInRefresh">↺</button>
-        </div>
-        <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;font-size:.64rem">
-          <label style="display:flex;align-items:center;gap:.22rem;cursor:pointer"><input type="checkbox" id="midiInSustainAuto" checked> Sustain auto</label>
-          <button class="btn-xs" id="btnMidiInSustain" disabled style="min-width:50px;font-size:.56rem">Sus OFF</button>
-          <label style="display:flex;align-items:center;gap:.22rem;cursor:pointer"><input type="checkbox" id="midiInVelAuto" checked> Vel auto</label>
-          <input type="range" id="midiInVelSlider" min="0" max="127" value="64" disabled style="width:55px;accent-color:#818cf8">
-          <span id="midiInVelVal" style="min-width:1.4rem;color:#c4b5fd;font-variant-numeric:tabular-nums">64</span>
-        </div>
-        <div class="midi-note">MIDI In routes directly to MIDI Out. Works without a loaded file.</div>
-      </div>
-      <div class="midi-panel" id="panelNone">
-        <div class="midi-note" style="color:rgba(196,181,253,.32)">MIDI output disabled — visualization only.</div>
+  <!-- Mini charts (montaña) — apilados, mismo ancho que NPS Timeline -->
+  <div class="charts-col">
+    <div class="chart-box"><canvas id="chartNps"></canvas><div class="chart-lbl">NPS</div><div class="chart-val" id="chartNpsVal">0</div></div>
+    <div class="chart-box"><canvas id="chartPoly"></canvas><div class="chart-lbl">Polyphony</div><div class="chart-val" id="chartPolyVal">0</div></div>
+    <div class="chart-box"><canvas id="chartBpm"></canvas><div class="chart-lbl">BPM</div><div class="chart-val" id="chartBpmVal">—</div></div>
+    <div class="chart-box"><canvas id="chartCC"></canvas><div class="chart-lbl">CC/s</div><div class="chart-val" id="chartCCVal">0</div></div>
+  </div>
+
+  <!-- MIDI I/O -->
+  <div class="midi-out-section">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.3rem">
+      <div class="roll-label">MIDI I/O</div>
+      <div class="midi-out-tabs">
+        <button class="midi-tab active" id="tabWmidi">MIDI Out</button>
+        <button class="midi-tab" id="tabMidiIn">MIDI In</button>
+        <button class="midi-tab" id="tabNone">Off</button>
       </div>
     </div>
-
-
-
-    <!-- File Info -->
-    <div id="midiStatsSection" style="display:none">
-      <div class="roll-label" style="margin-bottom:.3rem">File Info</div>
-      <div class="stats-grid">
-        <div class="stat-card"><div class="stat-lbl">Total Notes</div><div class="stat-val" id="sNotes">—</div></div>
-        <div class="stat-card"><div class="stat-lbl">Tracks</div><div class="stat-val" id="sTracks">—</div></div>
-        <div class="stat-card"><div class="stat-lbl">Duration</div><div class="stat-val" id="sDur">—</div><div class="stat-unit">sec</div></div>
-        <div class="stat-card"><div class="stat-lbl">Base BPM</div><div class="stat-val" id="sTempo">—</div></div>
-        <div class="stat-card"><div class="stat-lbl">Channels</div><div class="stat-val" id="sCh">—</div></div>
-        <div class="stat-card"><div class="stat-lbl">Format</div><div class="stat-val" id="sFmt">—</div></div>
-        <div class="stat-card"><div class="stat-lbl">PPQ</div><div class="stat-val" id="sPpq">—</div></div>
-        <div class="stat-card"><div class="stat-lbl">Tempo Chg</div><div class="stat-val" id="sTempoChanges">—</div></div>
-        <div class="stat-card"><div class="stat-lbl">Peak NPS</div><div class="stat-val" id="sPeakNps">—</div></div>
-        <div class="stat-card"><div class="stat-lbl">Peak Poly</div><div class="stat-val" id="sPeakPoly">—</div></div>
-        <div class="stat-card"><div class="stat-lbl">CC Events</div><div class="stat-val" id="sCcCount">—</div></div>
-        <div class="stat-card"><div class="stat-lbl">Pitch Range</div><div class="stat-val" id="sPitchRange">—</div></div>
+    <div class="midi-panel on" id="panelWmidi">
+      <div class="midi-row">
+        <span class="midi-status idle" id="wmidiStatus">Not started</span>
+        <button class="btn-md" id="btnWmidiRequest">Request Access</button>
+        <select class="midi-sel" id="wmidiOutputSel"><option value="">— select output —</option></select>
+        <button class="btn-md" id="btnWmidiRefresh">↺</button>
+        <button class="btn-md" id="btnWmidiAllOff">All Off</button>
       </div>
     </div>
+    <div class="midi-panel" id="panelMidiIn"></div>
+    <div class="midi-panel" id="panelNone">
+      <div class="midi-note" style="color:rgba(196,181,253,.32)">MIDI output disabled — visualization only.</div>
+    </div>
+  </div>
+
+  <!-- File Info — compacto 4x4 -->
+  <div id="midiStatsSection" style="display:none">
+    <div class="roll-label" style="margin-bottom:.22rem">File Info</div>
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-lbl">Notes</div><div class="stat-val" id="sNotes">—</div></div>
+      <div class="stat-card"><div class="stat-lbl">Tracks</div><div class="stat-val" id="sTracks">—</div></div>
+      <div class="stat-card"><div class="stat-lbl">Dur</div><div class="stat-val" id="sDur">—</div><div class="stat-unit">sec</div></div>
+      <div class="stat-card"><div class="stat-lbl">BPM</div><div class="stat-val" id="sTempo">—</div></div>
+      <div class="stat-card"><div class="stat-lbl">Chs</div><div class="stat-val" id="sCh">—</div></div>
+      <div class="stat-card"><div class="stat-lbl">Fmt</div><div class="stat-val" id="sFmt">—</div></div>
+      <div class="stat-card"><div class="stat-lbl">PPQ</div><div class="stat-val" id="sPpq">—</div></div>
+      <div class="stat-card"><div class="stat-lbl">Tmp Chg</div><div class="stat-val" id="sTempoChanges">—</div></div>
+      <div class="stat-card"><div class="stat-lbl">Pk NPS</div><div class="stat-val" id="sPeakNps">—</div></div>
+      <div class="stat-card"><div class="stat-lbl">Pk Poly</div><div class="stat-val" id="sPeakPoly">—</div></div>
+      <div class="stat-card"><div class="stat-lbl">CC Evts</div><div class="stat-val" id="sCcCount">—</div></div>
+      <div class="stat-card"><div class="stat-lbl">Pitch</div><div class="stat-val" id="sPitchRange">—</div></div>
+    </div>
+  </div>
 
 </div></div><!-- /left-scroll /left-col -->
 
-<!-- RIGHT COL: visualizer + keyboard -->
+<!-- RIGHT COL -->
 <div class="right-col">
   <div class="roll-wrap" id="rollWrap">
     <canvas id="rollCanvas"></canvas>
     <div id="achieveContainer"></div>
     <div class="roll-overlay" id="rollOverlay">
       <div class="overlay-icon">🎹</div>
-      <span>Drop a MIDI file here</span>
+      <span>Drop a MIDI file here or click to open</span>
     </div>
+    <div class="roll-click-hint" id="rollClickHint">Click to load a MIDI file</div>
   </div>
   <div class="keys-wrap" id="keysWrap"><canvas id="keysCanvas"></canvas></div>
-</div><!-- /right-col -->
+</div>
 
-<footer style="display:none"><p>2026 Dekxtopia &nbsp;·&nbsp; <a href="index.html">← Home</a> &nbsp;·&nbsp; WebGL2 · Worker Parser · Web MIDI</p></footer>
+<footer style="display:none"><p>2026 Dekxtopia · <a href="index.html">← Home</a> · WebGL2 · Worker Parser · Web MIDI</p></footer>
 </div><!-- /page-wrapper -->
 
-<!-- Color picker -->
+<!-- Color picker popup — 4x4 -->
 <div id="cpPop">
   <div class="cp-hdr">Ch <span id="cpChNum"></span> — Color</div>
   <div class="cp-swatches" id="cpSwatches"></div>
   <div style="display:flex;gap:.4rem;align-items:center">
     <input type="color" class="cp-custom" id="cpCustom">
-    <span style="font-size:.58rem;color:rgba(196,181,253,.35)">custom color</span>
+    <span style="font-size:.56rem;color:rgba(196,181,253,.35)">custom</span>
   </div>
   <button class="btn-md" id="cpClose" style="align-self:flex-end">✕ Close</button>
 </div>
 <div id="toast"></div>
+
 <script id="workerSrc" type="text/plain">
 'use strict';
 const CHUNK_SIZE = 65536;
@@ -392,7 +377,6 @@ self.onmessage = function(e) {
 
   self.postMessage({type:'progress',phase:'pass1',pct:0});
 
-  /* PASS 1 — tempo map */
   const tempoMap=[{tick:0,uspb:500000}];
   for(let ti=0;ti<rawTracks.length;ti++){
     const d=rawTracks[ti];let p=0,tick=0;
@@ -431,7 +415,6 @@ self.onmessage = function(e) {
 
   self.postMessage({type:'progress',phase:'pass2',pct:50});
 
-  /* PASS 2 — note pairing + CC count */
   const pending={};
   let chunkBuf=new Float32Array(CHUNK_SIZE*5);
   let chunkPos=0,totalNotes=0,ccCount=0;
@@ -486,7 +469,6 @@ self.onmessage = function(e) {
       else if(st===0xFF){
         const mt=d[p++];let[ml,mp]=varlen(d,p);p=mp;
         if(mt===0x2F){
-          // close dangling notes
           const endSec=tickToSec(tick);
           for(const k in pending){if(pending[k]){while(pending[k].length){const on=pending[k].shift();const n=parseInt(k)&127,c=(parseInt(k)>>7)&15;emitNote(tickToSec(on.tick),endSec,n,c,on.vel);}}}
           p+=ml;break;
@@ -499,6 +481,7 @@ self.onmessage = function(e) {
   flushChunk(true);
 };
 </script>
+
 <script>
 'use strict';
 
@@ -515,6 +498,7 @@ self.onmessage = function(e) {
   function mk(){const a=Math.random()*Math.PI*2,sp=.28+Math.random()*.28;return{x:Math.random()*W,y:Math.random()*H,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,ex:0,ey:0,r:.7+Math.random()*1.2,p:Math.random()*Math.PI*2,ps:.006+Math.random()*.014,sa:Math.random()*Math.PI*2,ss:.003+Math.random()*.004};}
   function init(){N=[];for(let i=0;i<95;i++)N.push(mk());}
   function loop(){
+    /* intensidad ligada a NPS (Fix #3) */
     const act=Math.min(1,window._neuralActivity||0);
     let diff=(window._neuralHueTarget||230)-window._neuralHue;
     if(diff>180)diff-=360;if(diff<-180)diff+=360;
@@ -535,20 +519,22 @@ self.onmessage = function(e) {
     for(let i=0;i<N.length;i++)for(let j=i+1;j<N.length;j++){
       const dx=N[i].x-N[j].x,dy=N[i].y-N[j].y,d=Math.sqrt(dx*dx+dy*dy);
       if(d<130){
-        const al=(1-d/130)*(.28+act*.18);
+        /* velocidad y brillo de estrellas proporcional al NPS (Fix #3) */
+        const al=(1-d/130)*(.28+act*.22);
         const[nr,ng,nb]=hsl2rgb((H2+25)%360,70,65);
         ctx.beginPath();ctx.moveTo(N[i].x,N[i].y);ctx.lineTo(N[j].x,N[j].y);
         ctx.strokeStyle=rgba(nr,ng,nb,al);ctx.lineWidth=(1-d/130)*.9;ctx.stroke();
       }
     }
-    const spd=.28+act*1.8;
+    /* velocidad de partículas ligada a act/NPS */
+    const spd=.28+act*2.2;
     N.forEach(n=>{
-      const pr=n.r*(.8+.2*Math.sin(n.p))*(1+act*.35);
+      const pr=n.r*(.8+.2*Math.sin(n.p))*(1+act*.5);
       const[nr,ng,nb]=hsl2rgb((H2+35)%360,78,68);
       const cr=ctx.createRadialGradient(n.x,n.y,0,n.x,n.y,pr+1.2);
       cr.addColorStop(0,rgba(nr,ng,nb,.95));cr.addColorStop(1,'rgba(0,0,0,0)');
       ctx.beginPath();ctx.arc(n.x,n.y,pr,0,Math.PI*2);ctx.fillStyle=cr;ctx.fill();
-      n.sa+=n.ss*(1+act*5);n.vx=Math.cos(n.sa)*spd;n.vy=Math.sin(n.sa)*spd;
+      n.sa+=n.ss*(1+act*6);n.vx=Math.cos(n.sa)*spd;n.vy=Math.sin(n.sa)*spd;
       const ddx=n.x-mx,ddy=n.y-my,dd=Math.sqrt(ddx*ddx+ddy*ddy);
       if(dd<160&&dd>0){const f=(160-dd)/160;n.ex+=ddx/dd*f*.11;n.ey+=ddy/dd*f*.11;}
       n.ex*=.89;n.ey*=.89;n.x+=n.vx+n.ex;n.y+=n.vy+n.ey;n.p+=n.ps;
@@ -587,11 +573,18 @@ function hexToHue(hex){
   return h*60;
 }
 
-/* ═══ COLOR PICKER ═══ */
+/* ═══ COLOR PICKER POPUP — paleta 4×4 ═══ */
 const cpPop=document.getElementById('cpPop');
 let _cpCh=-1;
-['#818cf8','#a78bfa','#f472b6','#fb923c','#facc15','#4ade80','#38bdf8','#f87171','#c084fc','#34d399','#60a5fa','#e879f9','#fbbf24','#a3e635','#22d3ee','#fb7185'].forEach(col=>{
+/* 16 colores organizados en 4 filas temáticas: violetas, cálidos, fríos, neón */
+[
+  '#818cf8','#a78bfa','#c4b5fd','#e879f9',
+  '#fb923c','#facc15','#f87171','#fb7185',
+  '#38bdf8','#60a5fa','#34d399','#22d3ee',
+  '#4ade80','#a3e635','#fbbf24','#f472b6'
+].forEach(col=>{
   const s=document.createElement('button');s.className='cp-sw';s.style.background=col;
+  s.title=col;
   s.addEventListener('click',()=>{CH_CSS[_cpCh]=col;_applyChColor();});
   document.getElementById('cpSwatches').appendChild(s);
 });
@@ -601,7 +594,7 @@ function _applyChColor(){_rebuildChLegend();updateGLColors();saveChColors();}
 function _openChColorPicker(ch,anchor){
   _cpCh=ch;document.getElementById('cpChNum').textContent=ch+1;document.getElementById('cpCustom').value=CH_CSS[ch];
   const r=anchor.getBoundingClientRect();
-  cpPop.style.left=Math.min(r.right+5,innerWidth-198)+'px';cpPop.style.top=Math.min(r.top,innerHeight-195)+'px';
+  cpPop.style.left=Math.min(r.right+5,innerWidth-195)+'px';cpPop.style.top=Math.min(r.top,innerHeight-220)+'px';
   cpPop.classList.add('show');
 }
 document.addEventListener('click',e=>{if(!cpPop.contains(e.target)&&!e.target.closest('.ch-chip'))cpPop.classList.remove('show');});
@@ -681,7 +674,6 @@ if(wglOk){
   });
   gl.bindVertexArray(null);
   gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
-  // FIX #11: clearColor con alpha < 1 para dejar ver el fondo neural
   gl.clearColor(.01,.007,.028,.45);
 }
 
@@ -690,7 +682,9 @@ function _growVBO(){
   _vboCap*=2;
   const nb=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,nb);
   gl.bufferData(gl.ARRAY_BUFFER,_vboCap*5*4,gl.DYNAMIC_DRAW);
-  gl.deleteBuffer(iVBO);iVBO=nb;
+  gl.deleteBuffer(iVBO);
+  /* reassign iVBO through closure trick — need to use the outer variable */
+  window._iVBO_ref=nb;
   gl.bindVertexArray(vao);
   const stride=5*4;
   ['a_s','a_e','a_p','a_c','a_v'].forEach((n,i)=>{
@@ -701,13 +695,22 @@ function _growVBO(){
   _vboByteOff=0;totalVboNotes=0;
 }
 
-function uploadChunk(f32,count){
+/* FIX #2: VBO upload robusto para archivos grandes
+   — al cargar se re-crea el VBO con tamaño exacto si es necesario */
+function _ensureVBOCapacity(needed){
   if(!wglOk)return;
-  if(totalVboNotes+count>_vboCap)_growVBO();
-  gl.bindBuffer(gl.ARRAY_BUFFER,iVBO);
-  gl.bufferSubData(gl.ARRAY_BUFFER,_vboByteOff,f32,0,count*5);
-  _vboByteOff+=count*5*4;totalVboNotes+=count;
-  for(let i=0;i<count;i++){const p=f32[i*5+2];if(p<pitchLo)pitchLo=p;if(p>pitchHi)pitchHi=p;}
+  if(needed>_vboCap){
+    _vboCap=Math.max(_vboCap*2, needed+65536);
+    gl.bindBuffer(gl.ARRAY_BUFFER,iVBO);
+    gl.bufferData(gl.ARRAY_BUFFER,_vboCap*5*4,gl.DYNAMIC_DRAW);
+    gl.bindVertexArray(vao);
+    const stride=5*4;
+    ['a_s','a_e','a_p','a_c','a_v'].forEach((n,i)=>{
+      const l=gl.getAttribLocation(glProg,n);
+      gl.enableVertexAttribArray(l);gl.vertexAttribPointer(l,1,gl.FLOAT,false,stride,i*4);gl.vertexAttribDivisor(l,1);
+    });
+    gl.bindVertexArray(null);
+  }
 }
 
 function updateGLColors(){
@@ -731,7 +734,6 @@ function renderFrame(t){
   gl.enable(gl.SCISSOR_TEST);gl.scissor(px,0,1,h);
   gl.clearColor(.63,.54,.98,.9);gl.clear(gl.COLOR_BUFFER_BIT);
   gl.disable(gl.SCISSOR_TEST);
-  // Restore transparent clear
   gl.clearColor(.01,.007,.028,.45);
 }
 
@@ -752,7 +754,7 @@ document.getElementById('volSlider').addEventListener('input',e=>{
   if(midiEnabled&&midiOutput)for(let ch=0;ch<16;ch++)try{midiOutput.send([0xB0|ch,7,v])}catch(_){}
 });
 
-/* ═══ KEYBOARD — Synthesia style, always redraws ═══ */
+/* ═══ KEYBOARD ═══ */
 const keysCanvas=document.getElementById('keysCanvas');
 const kctx=keysCanvas.getContext('2d',{alpha:false});
 const isBlack=n=>[1,3,6,8,10].includes(n%12);
@@ -763,6 +765,20 @@ const keyColors=new Array(128).fill(null);
 let _keysDirty=true;
 function markKeysDirty(){_keysDirty=true;}
 
+/* FIX #3: colores del teclado y fondo siempre desde las notas en pantalla */
+function _getScreenDominantColor(t){
+  if(!noteData)return null;
+  const lo=lowerBound(startArr,t-0.05);
+  const hi=Math.min(noteCount,upperBound(startArr,t+0.15));
+  if(lo>=hi)return null;
+  /* canal con más notas activas */
+  const freq=new Int32Array(16);
+  for(let i=lo;i<hi;i++){if(endArr[i]>=t)freq[noteData[i*5+3]&15]++;}
+  let bestCh=0,bestN=0;
+  for(let c=0;c<16;c++){if(freq[c]>bestN){bestN=freq[c];bestCh=c;}}
+  return bestN>0?{hue:hexToHue(CH_CSS[bestCh]),color:CH_CSS[bestCh]}:null;
+}
+
 function drawKeys(){
   _keysDirty=false;
   const W=keysCanvas.width,H=keysCanvas.height;
@@ -770,11 +786,14 @@ function drawKeys(){
   const kw=W/whiteCount,bw=kw*.6,bh=H*.63;
   const rad=Math.min(3,kw*.22);
 
-  // FIX #11: teclado fondo con hue del neural
-  const hue=window._neuralHue||230;
+  /* FIX #3: hue del teclado = hue dominante de notas en pantalla */
+  const domCol=_getScreenDominantColor(currentTime||0);
+  const hue=domCol?domCol.hue:(window._neuralHue||230);
+  /* también actualizar fondo neural */
+  if(domCol)window._neuralHueTarget=domCol.hue;
+
   kctx.fillStyle=`hsl(${hue},38%,5%)`;kctx.fillRect(0,0,W,H);
 
-  // White keys
   for(let n=0;n<128;n++){
     if(isBlack(n))continue;
     const wi=wIdx[n],x=wi*kw;
@@ -791,15 +810,13 @@ function drawKeys(){
     kctx.beginPath();
     kctx.moveTo(x+1,0);kctx.lineTo(x+kw-1,0);kctx.lineTo(x+kw-1,H-rad);kctx.quadraticCurveTo(x+kw-1,H,x+kw-1-rad,H);kctx.lineTo(x+1+rad,H);kctx.quadraticCurveTo(x+1,H,x+1,H-rad);kctx.closePath();
     kctx.fill();kctx.shadowBlur=0;
-    kctx.strokeStyle=col?col+'44':`rgba(${Math.round(120+Math.sin(hue/60)*30)},80,200,.14)`;kctx.lineWidth=.6;kctx.stroke();
+    kctx.strokeStyle=col?col+'44':`rgba(120,80,200,.12)`;kctx.lineWidth=.6;kctx.stroke();
     if(n%12===0&&kw>6){
-      kctx.fillStyle=col?'rgba(255,255,255,.72)':`hsl(${hue},50%,45%)`;kctx.fillStyle=kctx.fillStyle.replace(/[^)]+\)/,'');
       kctx.fillStyle=col?'rgba(255,255,255,.72)':'rgba(160,140,255,.22)';
       kctx.font=`${Math.max(6,Math.min(kw*.44,10))}px Inter,sans-serif`;kctx.textAlign='center';
       kctx.fillText('C'+(Math.floor(n/12)-1),x+kw/2,H-3);
     }
   }
-  // Black keys
   for(let n=0;n<128;n++){
     if(!isBlack(n))continue;
     const x=wOf[n]*kw+kw*.68,col=keyColors[n];
@@ -888,10 +905,8 @@ function buildSortedArrays(){
   fileDuration=0;for(let i=0;i<noteCount;i++)if(endArr[i]>fileDuration)fileDuration=endArr[i];
 }
 
-/* FIX #3 — Peak NPS + Polyphony computed over WHOLE song after load */
 function computePeaks(){
   if(!noteData||noteCount===0)return;
-  // Peak NPS: sliding 1s window
   let pNps=0,pNpsSec=0;
   const step=0.08;
   for(let t=0;t<=fileDuration;t+=step){
@@ -899,7 +914,6 @@ function computePeaks(){
     if(n>pNps){pNps=n;pNpsSec=t;}
   }
   _peakNps=pNps;_peakNpsSec=pNpsSec;
-  // Peak Polyphony: event sweep
   const evts=new Float64Array(noteCount*2);
   const dirs=new Int8Array(noteCount*2);
   for(let i=0;i<noteCount;i++){evts[i*2]=startArr[i];dirs[i*2]=1;evts[i*2+1]=endArr[i];dirs[i*2+1]=-1;}
@@ -936,9 +950,11 @@ function handleWorkerMsg(ev){
     if(m.final){
       midiMeta={tempoMap:m.tempoMap,secToTempoMap:m.secToTempoMap,ppq:m.ppq,numTracks:m.numTracks,fmt:m.fmt,ccCount:m.ccCount||0};
       buildSortedArrays();
-      // upload to WebGL
+      /* FIX #2: upload robusto para archivos grandes — asegurar capacidad exacta */
       if(wglOk){
+        _ensureVBOCapacity(noteCount);
         gl.bindBuffer(gl.ARRAY_BUFFER,iVBO);
+        /* upload en batches de 64k para no bloquear el hilo */
         const BATCH=65536;
         for(let off=0;off<noteCount;off+=BATCH){
           const end=Math.min(off+BATCH,noteCount);
@@ -976,21 +992,24 @@ function finalizeMidi(channels){
   document.getElementById('tTotal').textContent=fmtT(fileDuration);
   document.getElementById('midiStatsSection').style.display='block';
   document.getElementById('limitsChartSection').style.display='block';
-  // Resets
   _achNpsFired=false;_achPolyFired=false;
   document.getElementById('achieveContainer').innerHTML='';
   if(window._midiInReset)window._midiInReset();
   _rebuildChLegend(channels);
   updateGLColors();
-  computePeaks(); // FIX #3
+  computePeaks();
   buildLimitsData();
   resizeRoll();resizeKeys();
   startGLLoop();
   renderFrame(0);
-  startScheduler(); // FIX #1: start decoupled scheduler
+  startScheduler();
   showToast('✓ Loaded '+noteCount.toLocaleString()+' notes');
   window._neuralHueTarget=270;
+  /* mostrar hint de click brevemente */
+  const hint=document.getElementById('rollClickHint');
+  if(hint){hint.style.opacity='1';setTimeout(()=>{hint.style.opacity='0';},3500);}
 }
+
 /* ═══ CH LEGEND ═══ */
 function _rebuildChLegend(channels){
   const leg=document.getElementById('chLegend');leg.innerHTML='';
@@ -1001,13 +1020,13 @@ function _rebuildChLegend(channels){
     chip.dataset.ch=ch;
     chip.style.cssText=`background:${col}22;border-color:${col}55;color:${col};cursor:pointer`;
     chip.title='Clic para cambiar color del canal '+(ch+1);
-    chip.innerHTML=`<span class="ch-dot" style="background:${col}"></span>Ch ${ch+1} <span style="font-size:.55rem;opacity:.5">🎨</span>`;
+    chip.innerHTML=`<span class="ch-dot" style="background:${col}"></span>Ch ${ch+1} <span style="font-size:.52rem;opacity:.5">🎨</span>`;
     chip.addEventListener('click',()=>{if(window._openChColorPicker)_openChColorPicker(ch,chip);});
     leg.appendChild(chip);
   });
 }
 
-/* ═══ MINI CHARTS (mountain) — FIX #5/#6: siempre clear, siempre actualiza ═══ */
+/* ═══ MINI CHARTS (montaña) ═══ */
 const _HIST_LEN=280;
 const _histNps=new Float32Array(_HIST_LEN);
 const _histPoly=new Float32Array(_HIST_LEN);
@@ -1016,7 +1035,7 @@ const _histCC=new Float32Array(_HIST_LEN);
 let _histIdx=0;
 let _histLast=0;
 let _ccEventTimes=[];
-const _HIST_RATE=1000/20; // sample cada 50ms
+const _HIST_RATE=1000/20;
 
 function _pushHistSample(t){
   if(!noteData)return;
@@ -1024,11 +1043,9 @@ function _pushHistSample(t){
   if(now-_histLast<_HIST_RATE)return;
   _histLast=now;
   const nps=Math.round((upperBound(startArr,t)-lowerBound(startArr,t-0.25))*4);
-  // FIX #6: poly siempre, incluso sin MIDI OUT
   const poly=Math.max(0,upperBound(startArr,t)-lowerBound(endArr,t));
   let bpm=120;
   if(midiMeta)for(const e of midiMeta.secToTempoMap){if(e.sec>t)break;bpm=Math.round(e.bpm);}
-  // CC/s: contar eventos CC en la última ventana de 1s
   const _ccNow=performance.now()/1000;
   while(_ccEventTimes.length&&_ccEventTimes[0]<_ccNow-1)_ccEventTimes.shift();
   const ccps=_ccEventTimes.length;
@@ -1038,13 +1055,15 @@ function _pushHistSample(t){
 
 function _drawMiniChart(canvasId,hist,color,valId){
   const c=document.getElementById(canvasId);if(!c)return;
-  const W=c.offsetWidth,H=c.offsetHeight;if(!W||!H)return;
+  /* FIX #1: usar offsetParent width para que coincida con NPS Timeline */
+  const W=c.parentElement?c.parentElement.offsetWidth:c.offsetWidth;
+  const H=c.parentElement?c.parentElement.offsetHeight:c.offsetHeight;
+  if(!W||!H)return;
   if(c.width!==W||c.height!==H){c.width=W;c.height=H;}
   const ctx2=c.getContext('2d');
-  // FIX #5: siempre limpiar antes de dibujar
   ctx2.clearRect(0,0,W,H);
   let maxV=1;for(let i=0;i<_HIST_LEN;i++)if(hist[i]>maxV)maxV=hist[i];
-  const wi=_histIdx; // write index = next slot = oldest visible
+  const wi=_histIdx;
   ctx2.beginPath();
   ctx2.moveTo(0,H);
   for(let i=0;i<W;i++){
@@ -1054,7 +1073,7 @@ function _drawMiniChart(canvasId,hist,color,valId){
   }
   ctx2.lineTo(W,H);ctx2.closePath();
   const gr=ctx2.createLinearGradient(0,0,0,H);
-  gr.addColorStop(0,color+'55');gr.addColorStop(1,color+'08');
+  gr.addColorStop(0,color+'66');gr.addColorStop(1,color+'0a');
   ctx2.fillStyle=gr;ctx2.fill();
   ctx2.beginPath();
   for(let i=0;i<W;i++){
@@ -1062,7 +1081,7 @@ function _drawMiniChart(canvasId,hist,color,valId){
     const y=H-(hist[si]/maxV)*(H-2)-1;
     if(i===0)ctx2.moveTo(0,y);else ctx2.lineTo(i,y);
   }
-  ctx2.strokeStyle=color;ctx2.lineWidth=1.3;ctx2.stroke();
+  ctx2.strokeStyle=color;ctx2.lineWidth=1.5;ctx2.stroke();
   if(valId){
     const cur=hist[(_histIdx+_HIST_LEN-1)%_HIST_LEN];
     const el=document.getElementById(valId);if(el)el.textContent=Math.round(cur).toLocaleString();
@@ -1079,8 +1098,8 @@ function trackCCEvent(){
   _ccEventTimes.push(performance.now()/1000);
 }
 
-/* ═══ LIMITS CHART (NPS timeline over whole song) ═══ */
-let _limitsData=null; // Float32Array: nps per 0.5s bucket
+/* ═══ LIMITS CHART ═══ */
+let _limitsData=null;
 
 function buildLimitsData(){
   if(!noteData||noteCount===0)return;
@@ -1101,12 +1120,10 @@ function drawLimitsChart(){
   canvas.width=W*dpr;canvas.height=H*dpr;
   const ctx=canvas.getContext('2d');
   ctx.scale(dpr,dpr);
-  // FIX #5: clear primero
   ctx.clearRect(0,0,W,H);
   if(!_limitsData||!_limitsData.length)return;
   const n=_limitsData.length;
   let maxV=1;for(let i=0;i<n;i++)if(_limitsData[i]>maxV)maxV=_limitsData[i];
-  // Gradient fill
   ctx.beginPath();ctx.moveTo(0,H);
   for(let i=0;i<W;i++){
     const si=Math.floor(i/W*n);
@@ -1117,7 +1134,6 @@ function drawLimitsChart(){
   const gf=ctx.createLinearGradient(0,0,0,H);
   gf.addColorStop(0,'rgba(129,140,248,.65)');gf.addColorStop(1,'rgba(129,140,248,.07)');
   ctx.fillStyle=gf;ctx.fill();
-  // Line
   ctx.beginPath();
   for(let i=0;i<W;i++){
     const si=Math.floor(i/W*n);
@@ -1125,7 +1141,6 @@ function drawLimitsChart(){
     if(i===0)ctx.moveTo(0,y);else ctx.lineTo(i,y);
   }
   ctx.strokeStyle='#818cf8';ctx.lineWidth=1.4;ctx.stroke();
-  // Peak NPS marker
   if(_peakNpsSec>0&&fileDuration>0){
     const px=Math.floor((_peakNpsSec/fileDuration)*W);
     ctx.strokeStyle='rgba(251,146,60,.8)';ctx.lineWidth=1.5;
@@ -1135,7 +1150,6 @@ function drawLimitsChart(){
     ctx.fillStyle='rgba(251,146,60,.9)';ctx.font='bold 7.5px Inter,sans-serif';ctx.textAlign='center';
     ctx.fillText('⚡'+_peakNps,Math.min(px,W-22),10);
   }
-  // Playhead
   if(fileDuration>0&&currentTime>0){
     const px=Math.floor((currentTime/fileDuration)*W);
     ctx.strokeStyle='rgba(196,181,253,.5)';ctx.lineWidth=1;
@@ -1143,21 +1157,10 @@ function drawLimitsChart(){
   }
 }
 
-/* ═══ MIDI SCHEDULER — setInterval separado del RAF (FIX #1) ═══ */
+/* ═══ MIDI SCHEDULER ═══ */
 const soundingNotes=new Map();
 let dispCursor=0;
 let _schedInterval=null;
-
-/* FIX #2 — MIDI IN message buffer para mensajes fragmentados */
-let _midiBuf=[],_midiExpected=0;
-function _midiInBytesNeeded(st){
-  const hi=st>>4;
-  if(hi===0xC||hi===0xD)return 1;
-  if(st===0xF1||st===0xF3)return 1;
-  if(st===0xF2)return 2;
-  if(st>=0xF4)return 0;
-  return 2;
-}
 
 function resetDispatch(){
   _midiAllOff();soundingNotes.clear();
@@ -1169,11 +1172,10 @@ function resetDispatch(){
 function _runScheduler(){
   if(!noteData||!isPlaying)return;
   const now=currentTime;
-  const horizon=now+0.25; // 250ms look-ahead
+  const horizon=now+0.25;
   const wallNow=performance.now();
   let changed=false;
 
-  // Schedule note-ons
   while(dispCursor<noteCount&&startArr[dispCursor]<horizon){
     const i=dispCursor*5;
     const s=noteData[i],p=noteData[i+2]|0,ch=noteData[i+3]|0;
@@ -1189,7 +1191,6 @@ function _runScheduler(){
     dispCursor++;
   }
 
-  // FIX #3: achievement toasts at exact peak seconds
   if(!_achNpsFired&&_peakNpsSec>0&&currentTime>=_peakNpsSec){
     _achNpsFired=true;
     showAchieve('nps','⚡','Peak NPS',_peakNps.toLocaleString()+' NPS','peak notes/second in this song');
@@ -1199,7 +1200,6 @@ function _runScheduler(){
     showAchieve('poly','🎹','Peak Polyphony',_peakPoly.toLocaleString()+' notas','maximum simultaneous polyphony');
   }
 
-  // Schedule note-offs
   soundingNotes.forEach((info,k)=>{
     if(info.endSec<=now+0.1){
       const deltaMs=Math.max(0,(info.endSec-now)*1000);
@@ -1235,16 +1235,14 @@ function updateCounters(t){
   let bpm=120;
   if(midiMeta)for(const e of midiMeta.secToTempoMap){if(e.sec>t)break;bpm=e.bpm;}
   document.getElementById('liveBpm').textContent=bpm;
-  // Neural: intensidad proporcional a NPS vs peak
+  /* FIX #3: actividad neural proporcional a NPS vs peak */
   if(_peakNps>0){
     const act=Math.min(1,liveNps/_peakNps);
-    window._neuralActivity=act*.6+(window._neuralActivity||0)*.4;
+    window._neuralActivity=act*.7+(window._neuralActivity||0)*.3;
   }
-  // Neural: hue del canal dominante
-  const lo2=lowerBound(startArr,t-0.02);
-  if(lo2<noteCount&&startArr[lo2]<=t+0.06){
-    window._neuralHueTarget=hexToHue(CH_CSS[noteData[lo2*5+3]&15]);
-  }
+  /* FIX #3: hue del canal dominante en pantalla */
+  const dom=_getScreenDominantColor(t);
+  if(dom)window._neuralHueTarget=dom.hue;
 }
 
 /* ═══ GL LOOP ═══ */
@@ -1269,11 +1267,8 @@ function _glLoop(ts){
   }
   renderFrame(currentTime);
   if(window._midiInDrawHook)_midiInDrawHook();
-  // FIX #4: teclado siempre redibuja (es 2D Canvas, barato)
   drawKeys();
-  // Mini charts: actualizar siempre (FIX #6: también sin MIDI OUT)
   if(noteData){_pushHistSample(currentTime);_drawAllMiniCharts();}
-  // Limits chart playhead
   if(isPlaying&&noteData&&_limitsData)drawLimitsChart();
   _glRafId=requestAnimationFrame(_glLoop);
 }
@@ -1293,7 +1288,7 @@ function _syncKeyVisuals(){
   markKeysDirty();
 }
 
-/* ═══ PLAYER LOOP (UI/transport only) ═══ */
+/* ═══ PLAYER LOOP ═══ */
 function playerLoop(){
   currentTime=pausedAt+(performance.now()-startedAt)/1000;
   if(!noteData){if(isPlaying)rafId=requestAnimationFrame(playerLoop);return;}
@@ -1351,10 +1346,7 @@ document.getElementById('progressTrack').addEventListener('click',()=>{});
 function loadMidiFile(file){
   stopPlayback();
   stopGLLoop();
-  document.getElementById('btnPlay').disabled=true;
-  // FIX #7: reset MIDI IN overlay al cargar
   if(window._midiInReset)window._midiInReset();
-  // Reset state
   _vboByteOff=0;totalVboNotes=0;pitchLo=127;pitchHi=0;
   noteData=null;noteCount=0;startArr=null;endArr=null;
   fileDuration=0;midiMeta=null;rawBufs=[];rawTotal=0;dispCursor=0;
@@ -1363,11 +1355,9 @@ function loadMidiFile(file){
   _histIdx=0;_histNps.fill(0);_histPoly.fill(0);_histBpm.fill(0);_histCC.fill(0);_ccEventTimes=[];
   document.getElementById('achieveContainer').innerHTML='';
   if(wglOk){
-    // CRITICAL FIX: full VBO reset so large MIDIs render correctly
     gl.bindBuffer(gl.ARRAY_BUFFER,iVBO);
     gl.bufferData(gl.ARRAY_BUFFER,_vboCap*5*4,gl.DYNAMIC_DRAW);
     _vboByteOff=0;totalVboNotes=0;
-    // Re-bind vertex attributes after bufferData
     gl.bindVertexArray(vao);
     const _stride=5*4;
     ['a_s','a_e','a_p','a_c','a_v'].forEach((n,i)=>{
@@ -1395,9 +1385,25 @@ function loadMidiFile(file){
   reader.readAsArrayBuffer(file);
 }
 
+/* FIX #5: click en piano roll abre file dialog */
+document.getElementById('rollWrap').addEventListener('click',e=>{
+  /* no disparar si hay notas cargadas y el clic es en una zona que no sea el overlay */
+  if(noteData&&!document.getElementById('rollOverlay').classList.contains('hidden'))return;
+  if(!noteData)fi.click();
+});
+document.getElementById('rollOverlay').addEventListener('click',e=>{
+  e.stopPropagation();
+  fi.click();
+});
+
 const fi=document.createElement('input');fi.type='file';fi.accept='.mid,.midi';fi.style.display='none';
 document.body.appendChild(fi);
 fi.addEventListener('change',e=>{if(e.target.files[0])loadMidiFile(e.target.files[0]);fi.value='';});
+
+/* FIX #5: también click en el roll cuando ya hay archivo cargado abre prompt */
+rollCanvas.addEventListener('click',()=>{
+  fi.click();
+});
 
 const _dropOverlay=document.getElementById('globalDropOverlay');
 let _dragCnt=0;
@@ -1413,7 +1419,6 @@ document.addEventListener('drop',e=>{
 document.getElementById('btnClear').addEventListener('click',()=>{
   stopPlayback();
   stopGLLoop();
-  // FIX #7
   if(window._midiInReset)window._midiInReset();
   noteData=null;noteCount=0;startArr=null;endArr=null;
   fileDuration=0;midiMeta=null;rawBufs=[];rawTotal=0;dispCursor=0;
@@ -1434,7 +1439,7 @@ document.getElementById('btnClear').addEventListener('click',()=>{
   document.getElementById('liveNps').textContent='0';
   if(wglOk)gl.clear(gl.COLOR_BUFFER_BIT);
   hideParseBar();
-  startGLLoop(); // Keep GL loop running for idle keyboard
+  startGLLoop();
 });
 
 // Init
@@ -1442,18 +1447,19 @@ resizeRoll();resizeKeys();startGLLoop();
 </script>
 <!-- Color Picker Portal -->
 <div id="chColorPickerPortal" style="display:none;position:fixed;z-index:99999;background:rgba(10,8,32,.97);border:1px solid rgba(167,139,250,.35);border-radius:14px;padding:12px 14px;box-shadow:0 8px 40px rgba(0,0,0,.75);flex-direction:column;gap:9px;min-width:225px">
-  <div style="font-size:.62rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:rgba(196,181,253,.4)">Canal <span id="cpChNum"></span> · Color</div>
+  <div style="font-size:.62rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:rgba(196,181,253,.4)">Canal <span id="cpChNum2"></span> · Color</div>
   <canvas id="cpRainbow" width="200" height="30" style="border-radius:6px;cursor:crosshair;width:100%;display:block"></canvas>
   <div style="display:flex;align-items:center;gap:7px">
     <input type="color" id="cpNativeInput" style="width:34px;height:28px;border:1px solid rgba(167,139,250,.25);border-radius:5px;background:none;padding:0;cursor:pointer;flex-shrink:0">
     <span style="font-size:.58rem;color:rgba(196,181,253,.35)">o elige del arcoíris ↑</span>
   </div>
-  <div id="cpDefaultSwatches" style="display:flex;gap:5px;flex-wrap:wrap"></div>
+  <!-- paleta 4x4 -->
+  <div id="cpDefaultSwatches" style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px"></div>
   <button id="cpCloseBtn" style="font-size:.66rem;padding:.2rem .65rem;border-radius:6px;border:1px solid rgba(167,139,250,.22);background:rgba(99,63,210,.14);color:#a78bfa;cursor:pointer;align-self:flex-end">✕ Close</button>
 </div>
 
 <script>
-/* ═══ CH COLOR PICKER ═══ */
+/* ═══ CH COLOR PICKER (portal arcoíris) ═══ */
 (function(){
   const portal=document.getElementById('chColorPickerPortal');
   let activeCh=-1;
@@ -1468,20 +1474,26 @@ resizeRoll();resizeKeys();startGLLoop();
   }
   function openPicker(chIdx,anchor){
     activeCh=chIdx;
-    document.getElementById('cpChNum').textContent=chIdx+1;
+    document.getElementById('cpChNum2').textContent=chIdx+1;
     document.getElementById('cpNativeInput').value=CH_CSS[chIdx];
     drawRainbow();
     const sw=document.getElementById('cpDefaultSwatches');sw.innerHTML='';
-    CH_CSS_DEFAULT.forEach((c,i)=>{
+    /* paleta 4x4 misma que el cpPop */
+    [
+      '#818cf8','#a78bfa','#c4b5fd','#e879f9',
+      '#fb923c','#facc15','#f87171','#fb7185',
+      '#38bdf8','#60a5fa','#34d399','#22d3ee',
+      '#4ade80','#a3e635','#fbbf24','#f472b6'
+    ].forEach(c=>{
       const d=document.createElement('div');
-      d.style.cssText=`width:15px;height:15px;border-radius:50%;background:${c};cursor:pointer;border:2px solid ${i===chIdx?'#fff':'rgba(255,255,255,.14)'};flex-shrink:0;transition:transform 90ms`;
-      d.onmouseenter=()=>{d.style.transform='scale(1.22)'};d.onmouseleave=()=>{d.style.transform=''};
+      d.style.cssText=`width:100%;aspect-ratio:1;border-radius:5px;background:${c};cursor:pointer;border:2px solid rgba(255,255,255,.12);transition:transform 90ms`;
+      d.onmouseenter=()=>{d.style.transform='scale(1.18)'};d.onmouseleave=()=>{d.style.transform=''};
       d.addEventListener('click',()=>applyColor(c));sw.appendChild(d);
     });
     portal.style.display='flex';
     const r=anchor.getBoundingClientRect();
     let top=r.bottom+6,left=r.left;
-    if(left+240>innerWidth)left=innerWidth-248;if(top+240>innerHeight)top=r.top-248;
+    if(left+240>innerWidth)left=innerWidth-248;if(top+260>innerHeight)top=r.top-268;
     portal.style.top=Math.max(6,top)+'px';portal.style.left=Math.max(6,left)+'px';
   }
   function applyColor(hex){
@@ -1509,15 +1521,14 @@ resizeRoll();resizeKeys();startGLLoop();
 </script>
 
 <script>
-/* ═══ MIDI IN — FIX #2: buffer acumulador anti-fragmentación ═══ */
+/* ═══ MIDI IN ═══ */
 (function(){
   let midiInAccess=null,midiInPort=null;
-  const liveNotes=new Map(); // note → {startT, ch, vel}
+  const liveNotes=new Map();
   const finishedNotes=[];
-  const WINDOW=8; // seconds visible en overlay
+  const WINDOW=8;
   let _ovCanvas=null;
 
-  // Inject UI into panelMidiIn
   const panelIn=document.getElementById('panelMidiIn');
   if(panelIn){
     panelIn.innerHTML=`
@@ -1547,7 +1558,6 @@ resizeRoll();resizeKeys();startGLLoop();
     }
   }
 
-  // FIX #2: byte accumulator
   let _buf=[],_expected=0;
   function _bytesNeeded(st){
     const hi=st>>4;
@@ -1562,12 +1572,10 @@ resizeRoll();resizeKeys();startGLLoop();
     const st=d[0],hi=st>>4,ch=st&0xF;
     const n=d[1]??0,v=d[2]??64;
     if(hi===0x9&&v>0){
-      // Note On
       keyColors[n]=CH_CSS[ch%16];markKeysDirty();
       midiNoteOn(ch,n,v);
       liveNotes.set(n,{startT:performance.now()/1000,ch,vel:v});
     }else if(hi===0x8||(hi===0x9&&v===0)){
-      // Note Off
       keyColors[n]=null;markKeysDirty();
       midiNoteOff(ch,n);
       if(liveNotes.has(n)){
@@ -1576,7 +1584,6 @@ resizeRoll();resizeKeys();startGLLoop();
         liveNotes.delete(n);
       }
     }else if(hi===0xB){
-      // CC → pass through + track for CC/s chart
       if(window.trackCCEvent)trackCCEvent();
       if(midiEnabled&&midiOutput)try{midiOutput.send([st,n,v])}catch(_){}
     }
@@ -1589,7 +1596,7 @@ resizeRoll();resizeKeys();startGLLoop();
         if(_expected===0){_dispatch(_buf);_buf=[];}
       }else{
         _buf.push(byte);
-        if(_buf.length>=_expected+1){_dispatch(_buf);_buf=[_buf[0]];} // running status
+        if(_buf.length>=_expected+1){_dispatch(_buf);_buf=[_buf[0]];}
       }
     }
   }
@@ -1613,7 +1620,6 @@ resizeRoll();resizeKeys();startGLLoop();
   });
   document.getElementById('btnMidiInRefresh2')?.addEventListener('click',refreshInputs);
 
-  // Overlay canvas for MIDI IN notes on roll
   function getOverlay(){
     if(_ovCanvas)return _ovCanvas;
     _ovCanvas=document.createElement('canvas');
@@ -1634,7 +1640,6 @@ resizeRoll();resizeKeys();startGLLoop();
     const plo=Math.max(0,pitchLo-2),phi=Math.min(127,pitchHi+2)+1;
     const pRange=phi-plo||128;
     const tRange=WINDOW;
-    // finished
     const cutoff=now-WINDOW;
     while(finishedNotes.length&&finishedNotes[0].endT<cutoff)finishedNotes.shift();
     const drawNote=(note,startT,endT,ch)=>{
@@ -1651,14 +1656,13 @@ resizeRoll();resizeKeys();startGLLoop();
     liveNotes.forEach((info,note)=>drawNote(note,info.startT,now+0.05,info.ch));
   }
 
-  // FIX #7: expose reset
   window._midiInReset=function(){
     liveNotes.clear();finishedNotes.length=0;
     if(midiInPort)midiInPort.onmidimessage=null;
     _buf=[];_expected=0;
     const ov=document.getElementById('midiInOverlay');
     if(ov){const ctx=ov.getContext('2d');ctx.clearRect(0,0,ov.width,ov.height);}
-    if(midiInPort)midiInPort.onmidimessage=onMsg; // re-attach
+    if(midiInPort)midiInPort.onmidimessage=onMsg;
     keyColors.fill(null);markKeysDirty();
   };
 
