@@ -606,7 +606,6 @@ let POST_BUFFER = 4.0;
 let PRE_BUFFER  = 30.0;
 const PRE_BUFFER_MARGIN = 8;
 let _longestExitedNote = 0;
-
 const PLAYHEAD_FRAC = 0.18;
 
 /* Note Speed slider — float, rango 0.1 – 60s */
@@ -629,10 +628,19 @@ document.getElementById('speedSlider').addEventListener('input', e => {
 });
 
 /* ═══════════════════════════════════════════════════════
-   WEBGL2 — DIRECT DRAW con transparencia
-   alpha:true → el neural canvas se ve a través del fondo
-   Limpiar con clearColor(0,0,0,0) cada frame en lugar
-   de dibujar un quad de fondo sólido.
+   WEBGL2 — DIRECT DRAW con fondo semitransparente
+   
+   ESTRATEGIA DE TRANSPARENCIA:
+   El neural canvas está detrás (z-index:0, position:fixed).
+   El rollCanvas está encima (position dentro del roll-wrap).
+   
+   Para que el neural canvas se vea a través del roll:
+   - alpha:true en el contexto WebGL2
+   - Cada frame: clear a negro con alpha bajo (~0.18) →
+     esto crea el efecto de "fade" del fondo oscuro semi-
+     transparente que deja ver el neural canvas difuminado,
+     igual que tenía el original con el ping-pong.
+   - Las notas se dibujan encima con alpha:1 (opacas).
    ═══════════════════════════════════════════════════════ */
 
 const SRC_STRIP_VERT = `#version 300 es
@@ -668,11 +676,22 @@ const SRC_STRIP_FRAG = `#version 300 es
 precision mediump float;
 in vec3 v_col; in float v_act; out vec4 o;
 void main(){
-  vec3 c = v_act > 0.5 ? min(mix(v_col, vec3(1.0), 0.22)*1.38, vec3(1.0)) : v_col;
+  vec3 c = v_act > 0.5 ? min(mix(v_col,vec3(1.0),0.22)*1.38,vec3(1.0)) : v_col;
   o = vec4(c, 1.0);
 }`;
 
-/* ── GL context — alpha:true para ver el neural canvas ── */
+/* Quad para fondo semitransparente — un rect negro con alpha */
+const SRC_BG_VERT = `#version 300 es
+const vec2 P[4]=vec2[](vec2(-1,-1),vec2(1,-1),vec2(-1,1),vec2(1,1));
+void main(){ gl_Position=vec4(P[gl_VertexID],0,1); }`;
+
+const SRC_BG_FRAG = `#version 300 es
+precision mediump float;
+uniform float u_alpha;
+out vec4 o;
+void main(){ o=vec4(0.012, 0.007, 0.026, u_alpha); }`;
+
+/* ── GL context — alpha:true para compositar sobre el neural canvas ── */
 const rollCanvas = document.getElementById('rollCanvas');
 const gl = rollCanvas.getContext('webgl2',{
   alpha: true,
@@ -684,13 +703,14 @@ const gl = rollCanvas.getContext('webgl2',{
 });
 const wglOk = !!gl;
 
-let glProgStrip;
+let glProgStrip, glProgBg;
 let uStrip_t, uStrip_ah, uStrip_bh, uStrip_chColors;
+let uBg_alpha;
 let stripVAO, stripIVBO, totalVboNotes = 0;
 let _vboCap = 4000000;
 let _fboInvalid = true;
 
-/* Colores cacheados — se reconstruyen solo cuando cambian */
+/* Colores cacheados */
 const _glColorFlat = new Float32Array(48);
 let _glColorDirty = true;
 function _rebuildGLColorFlat(){
@@ -716,22 +736,24 @@ function _linkProg(vSrc,fSrc){
   return p;
 }
 
-function _ensureFBOs(){/* no-op — direct draw */}
+function _ensureFBOs(){/* no-op */}
 
 if(wglOk){
+  glProgBg    = _linkProg(SRC_BG_VERT,    SRC_BG_FRAG);
   glProgStrip = _linkProg(SRC_STRIP_VERT, SRC_STRIP_FRAG);
 
-  uStrip_t        = gl.getUniformLocation(glProgStrip,'u_t');
-  uStrip_ah       = gl.getUniformLocation(glProgStrip,'u_ah');
-  uStrip_bh       = gl.getUniformLocation(glProgStrip,'u_bh');
-  uStrip_chColors = gl.getUniformLocation(glProgStrip,'u_chColors');
+  uBg_alpha       = gl.getUniformLocation(glProgBg,    'u_alpha');
+  uStrip_t        = gl.getUniformLocation(glProgStrip, 'u_t');
+  uStrip_ah       = gl.getUniformLocation(glProgStrip, 'u_ah');
+  uStrip_bh       = gl.getUniformLocation(glProgStrip, 'u_bh');
+  uStrip_chColors = gl.getUniformLocation(glProgStrip, 'u_chColors');
 
   stripVAO = gl.createVertexArray();
   gl.bindVertexArray(stripVAO);
   stripIVBO = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, stripIVBO);
   gl.bufferData(gl.ARRAY_BUFFER, _vboCap*5*4, gl.DYNAMIC_DRAW);
-  const stride = 5*4;
+  const stride=5*4;
   ['a_s','a_e','a_p','a_c','a_v'].forEach((nm,i)=>{
     const loc=gl.getAttribLocation(glProgStrip,nm); if(loc<0)return;
     gl.enableVertexAttribArray(loc);
@@ -740,7 +762,6 @@ if(wglOk){
   });
   gl.bindVertexArray(null);
 
-  /* Configuración de blend para transparencia correcta con premultipliedAlpha:false */
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 }
@@ -783,16 +804,14 @@ function _rebindVAO(){
   gl.bindVertexArray(null);
 }
 
-function updateGLColors(){
-  _glColorDirty=true;
-}
+function updateGLColors(){ _glColorDirty=true; }
 
-/* ══════════════════════════════════════════════════
-   RENDER FRAME — transparent background + optimized
-   1. gl.clear con alpha=0 → deja ver el neural canvas
-   2. Dibujar notas (opacas, sin blend cost real)
-   3. Playhead con scissor
-   ══════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════
+   RENDER FRAME
+   Paso 1: quad de fondo semitransparente (deja ver neural)
+   Paso 2: notas instanciadas
+   Paso 3: playhead con scissor
+   ══════════════════════════════════════════════════════════ */
 let _lastRenderT = -9999;
 
 function renderFrame(t){
@@ -803,30 +822,31 @@ function renderFrame(t){
   gl.viewport(0,0,w,h);
   gl.bindFramebuffer(gl.FRAMEBUFFER,null);
 
-  /* Limpiar a transparente — el neural canvas se ve a través */
-  gl.clearColor(0.0, 0.0, 0.0, 0.0);
+  /* Paso 1: limpiar a transparente, luego quad de fondo */
+  gl.clearColor(0,0,0,0);
   gl.clear(gl.COLOR_BUFFER_BIT);
 
-  /* Notas — opacas (alpha=1 en el frag shader) */
+  /* Quad oscuro semitransparente — deja ver el neural canvas */
+  gl.useProgram(glProgBg);
+  gl.uniform1f(uBg_alpha, 0.72);
+  gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+
+  /* Paso 2: notas */
   if(totalVboNotes>0){
     gl.useProgram(glProgStrip);
-
-    /* Subir colores solo si cambiaron */
     if(_glColorDirty){
       _rebuildGLColorFlat();
-      gl.uniform3fv(uStrip_chColors, _glColorFlat);
+      gl.uniform3fv(uStrip_chColors,_glColorFlat);
     }
-
     gl.uniform1f(uStrip_t,  t);
     gl.uniform1f(uStrip_ah, NOTE_SPEED*(1.0-PLAYHEAD_FRAC));
     gl.uniform1f(uStrip_bh, NOTE_SPEED*PLAYHEAD_FRAC+POST_BUFFER);
-
     gl.bindVertexArray(stripVAO);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,totalVboNotes);
     gl.bindVertexArray(null);
   }
 
-  /* Playhead — línea vertical semitransparente en PLAYHEAD_FRAC */
+  /* Paso 3: playhead */
   const px=Math.floor(PLAYHEAD_FRAC*w);
   gl.disable(gl.BLEND);
   gl.enable(gl.SCISSOR_TEST);
@@ -835,7 +855,7 @@ function renderFrame(t){
   gl.clear(gl.COLOR_BUFFER_BIT);
   gl.disable(gl.SCISSOR_TEST);
   gl.enable(gl.BLEND);
-  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
 
   _lastRenderT=t;
   _fboInvalid=false;
