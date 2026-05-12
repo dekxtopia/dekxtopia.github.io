@@ -335,7 +335,6 @@ footer a:hover{color:#a78bfa}
   <button class="btn-md" id="cpClose" style="align-self:flex-end">✕ Close</button>
 </div>
 <div id="toast"></div>
-
 <!-- ═══ WEB WORKER — embedded MIDI parser ═══ -->
 <script id="workerSrc" type="text/plain">
 'use strict';
@@ -600,25 +599,16 @@ function showAchieve(id,icon,title,val,sub){
   setTimeout(()=>{el.classList.add('hide');setTimeout(()=>el.remove(),320);},5000);
 }
 
-/* ═══════════════════════════════════════════════════════
-   ★ BUFFER CONFIG — NOTE_SPEED y PRE_BUFFER son independientes
-   - NOTE_SPEED : ventana visual del piano roll (slider)
-   - PRE_BUFFER : ventana de carga en GPU (siempre >= NOTE_SPEED + margen)
-   - POST_BUFFER: cuánto tiempo "atrás" se mantiene en GPU (auto)
-   ════════════════════════════════════════════════════════ */
-let NOTE_SPEED  = 20;          // ★ solo visual — segundos visibles hacia adelante
-let PRE_BUFFER  = 30;          // ★ independiente — datos cargados en GPU (siempre mayor)
-let POST_BUFFER = 0;           // autoajustable según duración de notas largas
+/* ═══ BUFFER CONFIG ═══ */
+let NOTE_SPEED  = 20;
+let PRE_BUFFER  = 30;
+let POST_BUFFER = 0;
 let _longestExitedNote = 0;
-
-// ★ Margen mínimo extra sobre NOTE_SPEED para el buffer de GPU
 const PRE_BUFFER_MARGIN = 8;
 
-// ★ Recalcula PRE_BUFFER para que siempre sea suficiente sin importar NOTE_SPEED
 function _recalcPreBuffer(){
   PRE_BUFFER = Math.max(NOTE_SPEED + PRE_BUFFER_MARGIN, 30);
 }
-
 function _updatePostBuffer(noteDuration){
   if(noteDuration > _longestExitedNote){
     _longestExitedNote = noteDuration;
@@ -627,42 +617,79 @@ function _updatePostBuffer(noteDuration){
   }
 }
 
-// ★ speedSlider solo actualiza NOTE_SPEED — PRE_BUFFER se recalcula independientemente
 document.getElementById('speedSlider').addEventListener('input', e => {
   NOTE_SPEED = parseInt(e.target.value);
   document.getElementById('speedVal').textContent = NOTE_SPEED + 's';
   _recalcPreBuffer();
-  // El cache solo se recarga si la ventana visual creció más allá del buffer actual
   if(noteData && NOTE_SPEED > _cacheEnd - currentTime) _uploadCacheWindow(currentTime);
+  // Invalidar FBOs para que se redibuje desde cero con la nueva escala
+  _fboInvalid = true;
 });
 
-/* ═══ WEBGL2 ═══ */
+/* ═══ WEBGL2 — GPU PING-PONG SCROLL RENDERER ═══ */
 const PIANO_LO = 0;
 const PIANO_HI = 127;
 const PLAYHEAD_FRAC = 0.02;
 
-// ★ El shader usa u_ah = NOTE_SPEED (visual), no PRE_BUFFER
-const VERT=`#version 300 es
+// ── Fullscreen quad (scroll y blit)
+const SRC_QUAD_VERT = `#version 300 es
+precision highp float;
+const vec2 P[4]=vec2[](vec2(-1,-1),vec2(1,-1),vec2(-1,1),vec2(1,1));
+const vec2 U[4]=vec2[](vec2(0,0),vec2(1,0),vec2(0,1),vec2(1,1));
+out vec2 v_uv;
+void main(){ gl_Position=vec4(P[gl_VertexID],0,1); v_uv=U[gl_VertexID]; }`;
+
+// ── Scroll: desplaza textura anterior y limpia franja nueva
+const SRC_SCROLL_FRAG = `#version 300 es
+precision mediump float;
+in vec2 v_uv;
+uniform sampler2D u_prev;
+uniform float u_scrollUV;
+uniform float u_clearFrom;
+out vec4 o;
+void main(){
+  float sx = v_uv.x + u_scrollUV;
+  if(sx >= 1.0 || v_uv.x >= u_clearFrom){
+    o = vec4(0.0);
+  } else {
+    o = texture(u_prev, vec2(sx, v_uv.y));
+  }
+}`;
+
+// ── Strip vert: misma lógica de posición que el shader original
+const SRC_STRIP_VERT = `#version 300 es
 precision highp float;
 in float a_s,a_e,a_p,a_c,a_v;
 uniform float u_t,u_ah,u_bh;
 uniform vec3 u_chColors[16];
-out vec3 v_col;out float v_act,v_top;
+uniform float u_stripX;
+out vec3 v_col; out float v_act,v_top;
 void main(){
-  float ws=u_t-u_bh,we=u_t+u_ah;
-  if(a_e<ws||a_s>we){gl_Position=vec4(10.,10.,0.,1.);return;}
-  bool ir=gl_VertexID>=2,it=gl_VertexID==0||gl_VertexID==2;
-  float xn=1./(u_ah+u_bh);
-  float x=ir?clamp((a_e-ws)*xn,0.,1.):clamp((a_s-ws)*xn,0.,1.);
-  float pr=128.0,nh=1./pr;
-  float y=it?(a_p/pr+nh):(a_p/pr);
-  gl_Position=vec4(x*2.-1.,y*2.-1.,0.,1.);
+  float ws=u_t-u_bh, we=u_t+u_ah;
+  float xn=1.0/(u_ah+u_bh);
+  float endNDC  = clamp((a_e-ws)*xn,0.0,1.0)*2.0-1.0;
+  float startNDC= clamp((a_s-ws)*xn,0.0,1.0)*2.0-1.0;
+  if(endNDC<u_stripX||startNDC>1.0){
+    gl_Position=vec4(10.0,10.0,0.0,1.0);
+    v_col=vec3(0.0);v_act=0.0;v_top=0.0;return;
+  }
+  bool ir=gl_VertexID>=2;
+  bool it=(gl_VertexID==0||gl_VertexID==2);
+  float x=ir?clamp((a_e-ws)*xn,0.0,1.0):clamp((a_s-ws)*xn,0.0,1.0);
+  float stripUV=(u_stripX+1.0)*0.5;
+  x=clamp(x,stripUV,1.0);
+  float nh=1.0/128.0;
+  float y=it?(a_p/128.0+nh):(a_p/128.0);
+  gl_Position=vec4(x*2.0-1.0,y*2.0-1.0,0.0,1.0);
   v_col=u_chColors[int(a_c)%16];
-  v_act=(a_s<=u_t&&a_e>=u_t)?1.:0.;v_top=it?1.:0.;
+  v_act=(a_s<=u_t&&a_e>=u_t)?1.0:0.0;
+  v_top=it?1.0:0.0;
 }`;
-const FRAG=`#version 300 es
+
+// ── Strip frag: IDÉNTICO al original
+const SRC_STRIP_FRAG = `#version 300 es
 precision mediump float;
-in vec3 v_col;in float v_act,v_top;out vec4 o;
+in vec3 v_col; in float v_act,v_top; out vec4 o;
 void main(){
   vec3 c=v_col;
   if(v_act>.5)c=min(mix(c,vec3(1.),.22)*1.38,vec3(1.));
@@ -670,36 +697,124 @@ void main(){
   o=vec4(c,1.0);
 }`;
 
-const rollCanvas=document.getElementById('rollCanvas');
-const gl=rollCanvas.getContext('webgl2',{alpha:true,antialias:false,powerPreference:'high-performance'});
-const wglOk=!!gl;
+// ── Blit: reproduce el clearColor original (.01,.007,.028,.45)
+const SRC_BLIT_FRAG = `#version 300 es
+precision mediump float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+out vec4 o;
+void main(){
+  vec4 s=texture(u_tex,v_uv);
+  vec3 bg=vec3(0.01,0.007,0.028);
+  float a=s.a>0.01?1.0:0.45;
+  vec3 col=s.a>0.01?s.rgb:bg;
+  o=vec4(col,a);
+}`;
 
-let glProg,vao,iVBO,totalVboNotes=0,pitchLo=0,pitchHi=127;
-let uT,uAh,uBh,uChColors;
+const rollCanvas = document.getElementById('rollCanvas');
+const gl = rollCanvas.getContext('webgl2',{alpha:true,antialias:false,powerPreference:'high-performance'});
+const wglOk = !!gl;
+
+let glProgScroll,glProgStrip,glProgBlit;
+let uScroll_prev,uScroll_scrollUV,uScroll_clearFrom;
+let uStrip_t,uStrip_ah,uStrip_bh,uStrip_chColors,uStrip_stripX;
+let uBlit_tex;
+let stripVAO,stripIVBO,totalVboNotes=0,pitchLo=0,pitchHi=127;
 let _vboCap=4000000;
 
+// FBO ping-pong
+let pingFBO,pongFBO,pingTex,pongTex;
+let _fboW=0,_fboH=0;
+let _readFBO,_readTex,_writeFBO,_writeTex;
+let _fboInvalid=true; // fuerza redibujado completo cuando cambia escala o se resetea
+
+function _csh(src,type){
+  const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))console.error('Shader:',gl.getShaderInfoLog(s));
+  return s;
+}
+function _linkProg(vSrc,fSrc){
+  const p=gl.createProgram();
+  gl.attachShader(p,_csh(vSrc,gl.VERTEX_SHADER));
+  gl.attachShader(p,_csh(fSrc,gl.FRAGMENT_SHADER));
+  gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS))console.error('Link:',gl.getProgramInfoLog(p));
+  return p;
+}
+
+function _createFBOTex(w,h){
+  const tex=gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  const fbo=gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  gl.bindTexture(gl.TEXTURE_2D,null);
+  return {fbo,tex};
+}
+
+function _ensureFBOs(w,h){
+  if(_fboW===w&&_fboH===h)return;
+  _fboW=w;_fboH=h;
+  if(pingFBO){gl.deleteFramebuffer(pingFBO);gl.deleteTexture(pingTex);}
+  if(pongFBO){gl.deleteFramebuffer(pongFBO);gl.deleteTexture(pongTex);}
+  const a=_createFBOTex(w,h);
+  const b=_createFBOTex(w,h);
+  pingFBO=a.fbo;pingTex=a.tex;
+  pongFBO=b.fbo;pongTex=b.tex;
+  _readFBO=pingFBO;_readTex=pingTex;
+  _writeFBO=pongFBO;_writeTex=pongTex;
+  gl.bindFramebuffer(gl.FRAMEBUFFER,pingFBO);
+  gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,pongFBO);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  _fboInvalid=true;
+}
+
+function _swapFBOs(){
+  const tmpFBO=_readFBO,tmpTex=_readTex;
+  _readFBO=_writeFBO;_readTex=_writeTex;
+  _writeFBO=tmpFBO;_writeTex=tmpTex;
+}
+
 if(wglOk){
-  const csh=(src,t)=>{const s=gl.createShader(t);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));return s};
-  glProg=gl.createProgram();
-  gl.attachShader(glProg,csh(VERT,gl.VERTEX_SHADER));
-  gl.attachShader(glProg,csh(FRAG,gl.FRAGMENT_SHADER));
-  gl.linkProgram(glProg);
-  if(!gl.getProgramParameter(glProg,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(glProg));
-  gl.useProgram(glProg);
-  uT=gl.getUniformLocation(glProg,'u_t');uAh=gl.getUniformLocation(glProg,'u_ah');
-  uBh=gl.getUniformLocation(glProg,'u_bh');
-  uChColors=gl.getUniformLocation(glProg,'u_chColors');
-  vao=gl.createVertexArray();gl.bindVertexArray(vao);
-  iVBO=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,iVBO);
+  glProgScroll=_linkProg(SRC_QUAD_VERT,SRC_SCROLL_FRAG);
+  glProgStrip =_linkProg(SRC_STRIP_VERT,SRC_STRIP_FRAG);
+  glProgBlit  =_linkProg(SRC_QUAD_VERT,SRC_BLIT_FRAG);
+
+  uScroll_prev      =gl.getUniformLocation(glProgScroll,'u_prev');
+  uScroll_scrollUV  =gl.getUniformLocation(glProgScroll,'u_scrollUV');
+  uScroll_clearFrom =gl.getUniformLocation(glProgScroll,'u_clearFrom');
+
+  uStrip_t        =gl.getUniformLocation(glProgStrip,'u_t');
+  uStrip_ah       =gl.getUniformLocation(glProgStrip,'u_ah');
+  uStrip_bh       =gl.getUniformLocation(glProgStrip,'u_bh');
+  uStrip_chColors =gl.getUniformLocation(glProgStrip,'u_chColors');
+  uStrip_stripX   =gl.getUniformLocation(glProgStrip,'u_stripX');
+
+  uBlit_tex=gl.getUniformLocation(glProgBlit,'u_tex');
+
+  stripVAO=gl.createVertexArray();
+  gl.bindVertexArray(stripVAO);
+  stripIVBO=gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER,stripIVBO);
   gl.bufferData(gl.ARRAY_BUFFER,_vboCap*5*4,gl.DYNAMIC_DRAW);
   const stride=5*4;
-  ['a_s','a_e','a_p','a_c','a_v'].forEach((n,i)=>{
-    const l=gl.getAttribLocation(glProg,n);
-    gl.enableVertexAttribArray(l);gl.vertexAttribPointer(l,1,gl.FLOAT,false,stride,i*4);gl.vertexAttribDivisor(l,1);
+  ['a_s','a_e','a_p','a_c','a_v'].forEach((name,i)=>{
+    const loc=gl.getAttribLocation(glProgStrip,name);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc,1,gl.FLOAT,false,stride,i*4);
+    gl.vertexAttribDivisor(loc,1);
   });
   gl.bindVertexArray(null);
-  gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
-  gl.clearColor(.01,.007,.028,.45);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
 }
 
 /* ═══ CACHE ═══ */
@@ -707,7 +822,6 @@ let _cacheStart=0,_cacheEnd=0;
 
 function _uploadCacheWindow(t){
   if(!wglOk||!noteData||noteCount===0)return;
-  // ★ El cache usa PRE_BUFFER (grande), no NOTE_SPEED
   const winStart=Math.max(0,t-POST_BUFFER);
   const winEnd=Math.min(fileDuration,t+PRE_BUFFER);
   _cacheStart=winStart;_cacheEnd=winEnd;
@@ -717,29 +831,30 @@ function _uploadCacheWindow(t){
   if(count<=0){totalVboNotes=0;return;}
   if(count>_vboCap){
     _vboCap=count+65536;
-    gl.bindBuffer(gl.ARRAY_BUFFER,iVBO);
+    gl.bindBuffer(gl.ARRAY_BUFFER,stripIVBO);
     gl.bufferData(gl.ARRAY_BUFFER,_vboCap*5*4,gl.DYNAMIC_DRAW);
     _rebindVAO();
   }
-  gl.bindBuffer(gl.ARRAY_BUFFER,iVBO);
+  gl.bindBuffer(gl.ARRAY_BUFFER,stripIVBO);
   gl.bufferSubData(gl.ARRAY_BUFFER,0,noteData.subarray(lo*5,hi*5));
   totalVboNotes=count;
-  pitchLo=PIANO_LO; pitchHi=PIANO_HI;
+  pitchLo=PIANO_LO;pitchHi=PIANO_HI;
 }
 
 function _tickCacheRefill(t){
   if(!wglOk||!noteData)return;
-  // ★ El refill se basa en PRE_BUFFER, no en NOTE_SPEED
   const remaining=_cacheEnd-t;
   if(remaining<PRE_BUFFER*0.25||t<_cacheStart)_uploadCacheWindow(t);
 }
 
 function _rebindVAO(){
-  gl.bindVertexArray(vao);
+  gl.bindVertexArray(stripVAO);
   const stride=5*4;
-  ['a_s','a_e','a_p','a_c','a_v'].forEach((n,i)=>{
-    const l=gl.getAttribLocation(glProg,n);
-    gl.enableVertexAttribArray(l);gl.vertexAttribPointer(l,1,gl.FLOAT,false,stride,i*4);gl.vertexAttribDivisor(l,1);
+  ['a_s','a_e','a_p','a_c','a_v'].forEach((name,i)=>{
+    const loc=gl.getAttribLocation(glProgStrip,name);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc,1,gl.FLOAT,false,stride,i*4);
+    gl.vertexAttribDivisor(loc,1);
   });
   gl.bindVertexArray(null);
 }
@@ -748,31 +863,84 @@ function updateGLColors(){
   if(!wglOk)return;
   const flat=new Float32Array(48);
   for(let i=0;i<16;i++){const[r,g,b]=hexToRgb01(CH_CSS[i]);flat[i*3]=r;flat[i*3+1]=g;flat[i*3+2]=b;}
-  gl.useProgram(glProg);gl.uniform3fv(uChColors,flat);
+  gl.useProgram(glProgStrip);gl.uniform3fv(uStrip_chColors,flat);
 }
+
+/* ═══ RENDER FRAME — GPU PING-PONG ═══ */
+let _lastRenderT = -9999;
+const _STRIP_WIDTH_SEC = 0.05; // franja nueva = últimos 50ms
 
 function renderFrame(t){
   if(!wglOk)return;
-  const w=rollCanvas.width,h=rollCanvas.height;
-  gl.viewport(0,0,w,h);gl.clear(gl.COLOR_BUFFER_BIT);
-  if(totalVboNotes>0){
-    gl.useProgram(glProg);updateGLColors();
-    gl.uniform1f(uT,t);
-    // ★ u_ah recibe NOTE_SPEED (visual), u_bh recibe POST_BUFFER
-    gl.uniform1f(uAh,NOTE_SPEED);
-    gl.uniform1f(uBh,POST_BUFFER);
-    gl.bindVertexArray(vao);gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,totalVboNotes);gl.bindVertexArray(null);
+  const w=rollCanvas.width, h=rollCanvas.height;
+  if(w<4||h<4)return;
+
+  _ensureFBOs(w,h);
+  gl.viewport(0,0,w,h);
+
+  const totalSec = NOTE_SPEED + POST_BUFFER;
+  const dt = _fboInvalid ? totalSec : Math.max(0, t - _lastRenderT);
+  _fboInvalid = false;
+
+  // ── 1. SCROLL: leer _readTex → escribir en _writeFBO ──
+  const scrollUV  = dt / totalSec;              // cuánto mover en UV
+  const clearFrom = 1.0 - _STRIP_WIDTH_SEC / totalSec; // desde donde limpiar
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, _writeFBO);
+  gl.viewport(0,0,w,h);
+  gl.useProgram(glProgScroll);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, _readTex);
+  gl.uniform1i(uScroll_scrollUV_loc||uScroll_scrollUV, 0); // evitar conflicto nombre
+  gl.uniform1i(uScroll_prev, 0);
+  gl.uniform1f(uScroll_scrollUV, scrollUV);
+  gl.uniform1f(uScroll_clearFrom, clearFrom);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+  // ── 2. STRIP: dibujar notas nuevas sobre _writeFBO ──
+  if(totalVboNotes > 0){
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.useProgram(glProgStrip);
+    updateGLColors();
+    gl.uniform1f(uStrip_t,  t);
+    gl.uniform1f(uStrip_ah, NOTE_SPEED);
+    gl.uniform1f(uStrip_bh, POST_BUFFER);
+    gl.uniform1f(uStrip_stripX, clearFrom * 2.0 - 1.0); // UV → NDC
+    gl.bindVertexArray(stripVAO);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, totalVboNotes);
+    gl.bindVertexArray(null);
   }
-  const px=Math.floor(PLAYHEAD_FRAC*w);
-  gl.enable(gl.SCISSOR_TEST);gl.scissor(px,0,1,h);
-  gl.clearColor(.63,.54,.98,.9);gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+  // ── 3. SWAP ping-pong ──
+  _swapFBOs();
+
+  // ── 4. BLIT al canvas ──
+  gl.viewport(0,0,w,h);
+  gl.useProgram(glProgBlit);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, _readTex); // después del swap, _readTex = frame recién escrito
+  gl.uniform1i(uBlit_tex, 0);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+  // ── 5. PLAYHEAD (scissor, igual que el original) ──
+  const px = Math.floor(PLAYHEAD_FRAC * w);
+  gl.enable(gl.SCISSOR_TEST);
+  gl.scissor(px, 0, 2, h);
+  gl.clearColor(.63, .54, .98, .9);
+  gl.clear(gl.COLOR_BUFFER_BIT);
   gl.disable(gl.SCISSOR_TEST);
-  gl.clearColor(.01,.007,.028,.45);
+  gl.clearColor(0, 0, 0, 0);
+
+  _lastRenderT = t;
 }
 
 function resizeRoll(){
   const r=document.getElementById('rollWrap').getBoundingClientRect();
-  rollCanvas.width=Math.floor(r.width);rollCanvas.height=Math.floor(r.height||240);
+  rollCanvas.width=Math.floor(r.width);
+  rollCanvas.height=Math.floor(r.height||240);
+  _fboInvalid=true; // FBOs se recrean al cambiar tamaño
   const ov=document.getElementById('midiInOverlay');
   if(ov){ov.width=rollCanvas.width;ov.height=rollCanvas.height;}
 }
@@ -863,31 +1031,19 @@ let midiAccess=null,midiOutput=null,midiEnabled=true;
 const _midiQueue=[];
 let _midiFlushId=null;
 
-function _enqueueMidi(data, timestampMs){
-  _midiQueue.push({data, ts: timestampMs});
-}
-
+function _enqueueMidi(data,timestampMs){_midiQueue.push({data,ts:timestampMs});}
 function _flushMidiQueue(){
   const now=performance.now();
   let i=0;
   while(i<_midiQueue.length){
     const ev=_midiQueue[i];
-    if(ev.ts<=now+2){
-      if(midiEnabled&&midiOutput)try{midiOutput.send(ev.data,ev.ts)}catch(_){}
-      i++;
-    } else break;
+    if(ev.ts<=now+2){if(midiEnabled&&midiOutput)try{midiOutput.send(ev.data,ev.ts)}catch(_){}i++;}
+    else break;
   }
   if(i>0)_midiQueue.splice(0,i);
 }
-
-function _startMidiFlushLoop(){
-  if(_midiFlushId)return;
-  _midiFlushId=setInterval(_flushMidiQueue,1);
-}
-function _stopMidiFlushLoop(){
-  if(_midiFlushId){clearInterval(_midiFlushId);_midiFlushId=null;}
-  _midiQueue.length=0;
-}
+function _startMidiFlushLoop(){if(_midiFlushId)return;_midiFlushId=setInterval(_flushMidiQueue,1);}
+function _stopMidiFlushLoop(){if(_midiFlushId){clearInterval(_midiFlushId);_midiFlushId=null;}_midiQueue.length=0;}
 
 document.getElementById('tabWmidi').addEventListener('click',()=>{midiEnabled=true;_setMidiTab('tabWmidi','panelWmidi');});
 document.getElementById('tabMidiIn').addEventListener('click',()=>{midiEnabled=true;_setMidiTab('tabMidiIn','panelMidiIn');});
@@ -930,16 +1086,8 @@ function _midiAllOff(){
     try{midiOutput.send([0xB0|ch,121,0])}catch(_){}
   }
 }
-
-function midiNoteOn(ch,n,v){
-  if(!midiEnabled||!midiOutput)return;
-  const vel=Math.max(32,Math.min(127,v));
-  _enqueueMidi([0x90|ch,n,vel],performance.now());
-}
-function midiNoteOff(ch,n){
-  if(!midiEnabled||!midiOutput)return;
-  _enqueueMidi([0x80|ch,n,0],performance.now());
-}
+function midiNoteOn(ch,n,v){if(!midiEnabled||!midiOutput)return;const vel=Math.max(32,Math.min(127,v));_enqueueMidi([0x90|ch,n,vel],performance.now());}
+function midiNoteOff(ch,n){if(!midiEnabled||!midiOutput)return;_enqueueMidi([0x80|ch,n,0],performance.now());}
 function playNoteOn(ch,note,vel){keyColors[note]=CH_CSS[ch%16];markKeysDirty();midiNoteOn(ch,note,vel);}
 function playNoteOff(ch,note){keyColors[note]=null;markKeysDirty();midiNoteOff(ch,note);}
 
@@ -1029,9 +1177,8 @@ function handleWorkerMsg(ev){
       buildSortedArrays();
       _longestExitedNote=0;POST_BUFFER=0;
       document.getElementById('postBufVal').textContent='0.0s';
-      // ★ Al cargar archivo se recalcula PRE_BUFFER y se sube el cache
       _recalcPreBuffer();
-      if(wglOk){_cacheStart=0;_cacheEnd=0;_uploadCacheWindow(0);}
+      if(wglOk){_cacheStart=0;_cacheEnd=0;_uploadCacheWindow(0);_fboInvalid=true;}
       const channels=new Set();for(let i=0;i<noteCount;i++)channels.add(noteData[i*5+3]|0);
       finalizeMidi(channels);
     }
@@ -1096,10 +1243,8 @@ function _rebuildChLegend(channels){
 
 /* ═══ MINI CHARTS ═══ */
 const _HIST_LEN=280;
-const _histNps=new Float32Array(_HIST_LEN);
-const _histPoly=new Float32Array(_HIST_LEN);
-const _histBpm=new Float32Array(_HIST_LEN);
-const _histCC=new Float32Array(_HIST_LEN);
+const _histNps=new Float32Array(_HIST_LEN),_histPoly=new Float32Array(_HIST_LEN);
+const _histBpm=new Float32Array(_HIST_LEN),_histCC=new Float32Array(_HIST_LEN);
 const _histSkipped=new Float32Array(_HIST_LEN);
 let _histIdx=0,_histLast=0;
 const _HIST_RATE=1000/30;
@@ -1113,9 +1258,7 @@ function _pushHistSample(t){
   const poly=Math.max(0,upperBound(startArr,t)-lowerBound(endArr,t));
   let bpm=120;
   if(midiMeta)for(const e of midiMeta.secToTempoMap){if(e.sec>t)break;bpm=Math.round(e.bpm);}
-  const ccps=_fileCCTimes.length>0
-    ? upperBound(_fileCCTimes,t) - lowerBound(_fileCCTimes,t-1.0)
-    : 0;
+  const ccps=_fileCCTimes.length>0?upperBound(_fileCCTimes,t)-lowerBound(_fileCCTimes,t-1.0):0;
   _histNps[_histIdx]=nps;_histPoly[_histIdx]=poly;_histBpm[_histIdx]=bpm;_histCC[_histIdx]=ccps;
   _histSkipped[_histIdx]=_skippedThisFrame;
   _histIdx=(_histIdx+1)%_HIST_LEN;
@@ -1208,38 +1351,23 @@ function drawLimitsChart(){
   }
 }
 
-/* ═══ PERFORMANCE / FRAME-SKIP SYSTEM ═══ */
-let _lastFrameTs=0;
-let _frameDropCount=0;
-let _skipLevel=0;
-let _skippedThisFrame=0;
-const _FRAME_BUDGET=1000/50;
-const _DROP_THRESH=3;
-const _RECOVER_THRESH=8;
+/* ═══ PERFORMANCE / FRAME-SKIP ═══ */
+let _lastFrameTs=0,_frameDropCount=0,_skipLevel=0,_skippedThisFrame=0;
+const _FRAME_BUDGET=1000/50,_DROP_THRESH=3,_RECOVER_THRESH=8;
 let _goodFrameCount=0;
 
 function _evalFramePerf(ts){
   if(_lastFrameTs===0){_lastFrameTs=ts;return;}
-  const dt=ts-_lastFrameTs;
-  _lastFrameTs=ts;
+  const dt=ts-_lastFrameTs;_lastFrameTs=ts;
   if(dt>_FRAME_BUDGET*1.5){
-    _frameDropCount++;
-    _goodFrameCount=0;
-    if(_frameDropCount>=_DROP_THRESH){
-      _skipLevel=Math.min(3,_skipLevel+1);
-      _frameDropCount=0;
-    }
+    _frameDropCount++;_goodFrameCount=0;
+    if(_frameDropCount>=_DROP_THRESH){_skipLevel=Math.min(3,_skipLevel+1);_frameDropCount=0;}
   }else{
-    _goodFrameCount++;
-    _frameDropCount=0;
-    if(_goodFrameCount>=_RECOVER_THRESH){
-      _skipLevel=Math.max(0,_skipLevel-1);
-      _goodFrameCount=0;
-    }
+    _goodFrameCount++;_frameDropCount=0;
+    if(_goodFrameCount>=_RECOVER_THRESH){_skipLevel=Math.max(0,_skipLevel-1);_goodFrameCount=0;}
   }
   _skippedThisFrame=0;
 }
-
 function _shouldSkipVelocity(vel){
   if(_skipLevel===0)return false;
   if(_skipLevel===1&&vel<64)return true;
@@ -1250,8 +1378,7 @@ function _shouldSkipVelocity(vel){
 
 /* ═══ MIDI SCHEDULER ═══ */
 const soundingNotes=new Map();
-let dispCursor=0;
-let _schedInterval=null;
+let dispCursor=0,_schedInterval=null;
 
 function resetDispatch(){
   _midiAllOff();soundingNotes.clear();
@@ -1276,15 +1403,10 @@ function _runScheduler(){
     const noteDur=endSec-s;
     const k=ch*128+p;
     const deltaMs=Math.max(0,(s-now)*1000);
-
-    if(s<now-0.1){
-      _updatePostBuffer(noteDur);
-    }
-
+    if(s<now-0.1){_updatePostBuffer(noteDur);}
     if(s>=now-0.05){
-      if(_shouldSkipVelocity(v)){
-        _skippedThisFrame++;
-      }else{
+      if(_shouldSkipVelocity(v)){_skippedThisFrame++;}
+      else{
         if(midiEnabled&&midiOutput)_enqueueMidi([0x90|ch,p,v],wallNow+deltaMs);
         if(deltaMs<120){keyColors[p]=CH_CSS[ch%16];changed=true;}
         soundingNotes.set(k,{endSec,ch,note:p,onMs:wallNow+deltaMs});
@@ -1313,14 +1435,8 @@ function _runScheduler(){
   if(changed)markKeysDirty();
 }
 
-function startScheduler(){
-  if(_schedInterval)clearInterval(_schedInterval);
-  _schedInterval=setInterval(_runScheduler,5);
-  _startMidiFlushLoop();
-}
-function stopScheduler(){
-  if(_schedInterval){clearInterval(_schedInterval);_schedInterval=null;}
-}
+function startScheduler(){if(_schedInterval)clearInterval(_schedInterval);_schedInterval=setInterval(_runScheduler,5);_startMidiFlushLoop();}
+function stopScheduler(){if(_schedInterval){clearInterval(_schedInterval);_schedInterval=null;}}
 
 /* ═══ LIVE COUNTERS ═══ */
 let lfc=0;
@@ -1342,9 +1458,7 @@ function updateCounters(t){
 /* ═══ GL LOOP ═══ */
 let isPlaying=false,startedAt=0,pausedAt=0,currentTime=0,rafId=null;
 const fmtT=s=>{const m=Math.floor(s/60);return`${m}:${Math.floor(s%60).toString().padStart(2,'0')}`};
-
-let _glRafId=null;
-let _fpsFrames=0,_fpsLast=0;
+let _glRafId=null,_fpsFrames=0,_fpsLast=0;
 
 function _glLoop(ts){
   _evalFramePerf(ts);
@@ -1406,6 +1520,7 @@ function stopPlayback(){
   document.getElementById('btnPlay').textContent='▶';
   document.getElementById('liveNotes').textContent='0';
   document.getElementById('liveNps').textContent='0';
+  _fboInvalid=true;
   if(noteData){_uploadCacheWindow(0);renderFrame(0);}
   if(_limitsData)drawLimitsChart();
 }
@@ -1433,382 +1548,205 @@ document.getElementById('btnStop').addEventListener('click',stopPlayback);
 document.getElementById('progressTrack').addEventListener('click',()=>{});
 </script>
 <script>
+'use strict';
+
 /* ═══ FILE LOADING ═══ */
 function loadMidiFile(file){
-  stopPlayback();
-  stopGLLoop();
-  if(window._midiInReset)window._midiInReset();
-  totalVboNotes=0;pitchLo=PIANO_LO;pitchHi=PIANO_HI;
+  if(!file)return;
+  const ext=file.name.split('.').pop().toLowerCase();
+  if(ext!=='mid'&&ext!=='midi'){showToast('Only .mid / .midi files supported');return;}
+  stopPlayback();stopGLLoop();
   noteData=null;noteCount=0;startArr=null;endArr=null;
-  fileDuration=0;midiMeta=null;rawBufs=[];rawTotal=0;dispCursor=0;
-  _fileCCTimes=[];
-  _cacheStart=0;_cacheEnd=0;
-  _limitsData=null;_achNpsFired=false;_achPolyFired=false;
-  _peakNps=0;_peakNpsSec=0;_peakPoly=0;_peakPolySec=0;
-  _histIdx=0;_histNps.fill(0);_histPoly.fill(0);_histBpm.fill(0);_histCC.fill(0);_histSkipped.fill(0);
-  _skipLevel=0;_frameDropCount=0;_goodFrameCount=0;_skippedThisFrame=0;_lastFrameTs=0;
-  _longestExitedNote=0;POST_BUFFER=0;
-  document.getElementById('postBufVal').textContent='0.0s';
-  document.getElementById('achieveContainer').innerHTML='';
-  if(wglOk){
-    gl.bindBuffer(gl.ARRAY_BUFFER,iVBO);
-    gl.bufferData(gl.ARRAY_BUFFER,_vboCap*5*4,gl.DYNAMIC_DRAW);
-    totalVboNotes=0;
-    _rebindVAO();
-    renderFrame(0);
-  }
-  document.getElementById('fileBar').classList.add('on');
+  rawBufs=[];rawTotal=0;midiMeta=null;fileDuration=0;
+  _longestExitedNote=0;POST_BUFFER=0;_fileCCTimes=[];
   document.getElementById('fileName').textContent=file.name;
-  document.getElementById('fileNotes').textContent='loading…';
-  document.getElementById('midiStatsSection').style.display='none';
-  document.getElementById('limitsChartSection').style.display='none';
-  document.getElementById('chLegend').innerHTML='';
-  document.getElementById('tTotal').textContent='—:--';
-  document.getElementById('liveBpm').textContent='…';
-  document.getElementById('rollInfo').textContent='';
-  ['sNotes','sTracks','sDur','sTempo','sCh','sFmt','sPpq','sTempoChanges','sPeakNps','sPeakPoly','sCcCount','sPitchRange'].forEach(id=>{
-    const el=document.getElementById(id);if(el)el.textContent='—';
-  });
-  showParseBar();
-  const reader=new FileReader();
-  reader.onload=ev=>{spawnWorker();worker.postMessage(ev.target.result,[ev.target.result]);};
-  reader.readAsArrayBuffer(file);
-}
-
-/* ═══ FILE INPUT & DRAG DROP ═══ */
-const fi=document.createElement('input');fi.type='file';fi.accept='.mid,.midi';fi.style.display='none';
-document.body.appendChild(fi);
-fi.addEventListener('change',e=>{if(e.target.files[0])loadMidiFile(e.target.files[0]);fi.value='';});
-
-document.getElementById('rollWrap').addEventListener('click',e=>{
-  if(noteData&&!document.getElementById('rollOverlay').classList.contains('hidden'))return;
-  if(!noteData)fi.click();
-});
-document.getElementById('rollOverlay').addEventListener('click',e=>{
-  e.stopPropagation();fi.click();
-});
-rollCanvas.addEventListener('click',()=>{fi.click();});
-
-const _dropOverlay=document.getElementById('globalDropOverlay');
-let _dragCnt=0;
-document.addEventListener('dragenter',e=>{if(e.dataTransfer&&[...e.dataTransfer.types].includes('Files')){_dragCnt++;_dropOverlay.style.display='flex';}});
-document.addEventListener('dragleave',()=>{_dragCnt=Math.max(0,_dragCnt-1);if(!_dragCnt)_dropOverlay.style.display='none';});
-document.addEventListener('dragover',e=>e.preventDefault());
-document.addEventListener('drop',e=>{
-  e.preventDefault();_dragCnt=0;_dropOverlay.style.display='none';
-  const f=e.dataTransfer.files[0];
-  if(f&&(f.name.toLowerCase().endsWith('.mid')||f.name.toLowerCase().endsWith('.midi')))loadMidiFile(f);
-});
-
-/* ═══ CLEAR BUTTON ═══ */
-document.getElementById('btnClear').addEventListener('click',()=>{
-  stopPlayback();
-  stopGLLoop();
-  if(window._midiInReset)window._midiInReset();
-  noteData=null;noteCount=0;startArr=null;endArr=null;
-  fileDuration=0;midiMeta=null;rawBufs=[];rawTotal=0;dispCursor=0;
-  _fileCCTimes=[];
-  _cacheStart=0;_cacheEnd=0;
-  _limitsData=null;_achNpsFired=false;_achPolyFired=false;
-  _peakNps=0;_peakNpsSec=0;_peakPoly=0;_peakPolySec=0;
-  _histIdx=0;_histNps.fill(0);_histPoly.fill(0);_histBpm.fill(0);_histCC.fill(0);_histSkipped.fill(0);
-  _skipLevel=0;_frameDropCount=0;_goodFrameCount=0;_skippedThisFrame=0;_lastFrameTs=0;
-  _longestExitedNote=0;POST_BUFFER=0;
-  document.getElementById('postBufVal').textContent='0.0s';
-  totalVboNotes=0;pitchLo=PIANO_LO;pitchHi=PIANO_HI;
-  document.getElementById('fileBar').classList.remove('on');
+  document.getElementById('fileBar').classList.add('on');
+  document.getElementById('fileNotes').textContent='parsing…';
   document.getElementById('midiStatsSection').style.display='none';
   document.getElementById('limitsChartSection').style.display='none';
   document.getElementById('rollOverlay').classList.remove('hidden');
-  document.getElementById('chLegend').innerHTML='';
-  document.getElementById('achieveContainer').innerHTML='';
+  document.getElementById('btnPlay').disabled=true;
+  showParseBar();
+  spawnWorker();
+  file.arrayBuffer().then(buf=>{worker.postMessage(buf,[buf]);}).catch(err=>{showToast('Read error: '+err.message);hideParseBar();});
+}
+
+document.getElementById('rollWrap').addEventListener('click',e=>{
+  if(e.target.closest('#achieveContainer')||e.target.closest('#cpPop'))return;
+  if(!noteData){
+    const inp=document.createElement('input');inp.type='file';inp.accept='.mid,.midi';
+    inp.onchange=()=>{if(inp.files[0])loadMidiFile(inp.files[0]);};inp.click();
+  }
+});
+
+document.getElementById('btnClear').addEventListener('click',e=>{
+  e.stopPropagation();
+  stopPlayback();stopGLLoop();
+  noteData=null;noteCount=0;startArr=null;endArr=null;
+  rawBufs=[];rawTotal=0;midiMeta=null;fileDuration=0;_fileCCTimes=[];
+  _longestExitedNote=0;POST_BUFFER=0;
+  document.getElementById('fileBar').classList.remove('on');
+  document.getElementById('rollOverlay').classList.remove('hidden');
+  document.getElementById('midiStatsSection').style.display='none';
+  document.getElementById('limitsChartSection').style.display='none';
+  document.getElementById('fileName').textContent='—';
+  document.getElementById('fileNotes').textContent='';
   document.getElementById('tTotal').textContent='0:00';
-  document.getElementById('liveBpm').textContent='—';
-  document.getElementById('rollInfo').textContent='';
+  document.getElementById('tElapsed').textContent='0:00';
+  document.getElementById('progressFill').style.width='0%';
   document.getElementById('liveNotes').textContent='0';
   document.getElementById('liveNps').textContent='0';
-  const fpsEl=document.getElementById('fpsOverlay');if(fpsEl)fpsEl.textContent='0 FPS';
-  if(wglOk)gl.clear(gl.COLOR_BUFFER_BIT);
-  hideParseBar();
+  document.getElementById('liveBpm').textContent='—';
+  document.getElementById('chLegend').innerHTML='';
+  document.getElementById('achieveContainer').innerHTML='';
+  keyColors.fill(null);markKeysDirty();
+  _fboInvalid=true;
+  if(wglOk){
+    gl.bindFramebuffer(gl.FRAMEBUFFER,pingFBO);
+    gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,pongFBO);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  }
   startGLLoop();
+  showToast('Cleared');
+});
+
+/* ═══ DRAG & DROP ═══ */
+const dropOv=document.getElementById('globalDropOverlay');
+let _dragCount=0;
+document.addEventListener('dragenter',e=>{
+  e.preventDefault();
+  _dragCount++;
+  if(_dragCount===1)dropOv.style.display='flex';
+});
+document.addEventListener('dragleave',e=>{
+  _dragCount=Math.max(0,_dragCount-1);
+  if(_dragCount===0)dropOv.style.display='none';
+});
+document.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='copy';});
+document.addEventListener('drop',e=>{
+  e.preventDefault();_dragCount=0;dropOv.style.display='none';
+  const file=[...e.dataTransfer.files].find(f=>/\.(mid|midi)$/i.test(f.name));
+  if(file)loadMidiFile(file);else showToast('Drop a .mid or .midi file');
 });
 
 /* ═══ KEYBOARD SHORTCUTS ═══ */
 document.addEventListener('keydown',e=>{
-  const tag=document.activeElement?.tagName;
-  if(tag==='INPUT'||tag==='SELECT'||tag==='TEXTAREA')return;
-  switch(e.code){
-    case 'Space':
-      e.preventDefault();
-      document.getElementById('btnPlay').click();
-      break;
-    case 'KeyO':
-      e.preventDefault();
-      fi.click();
-      break;
-    case 'KeyP':
-      e.preventDefault();
-      if(midiEnabled){document.getElementById('tabNone').click();showToast('MIDI Out OFF [P]');}
-      else{document.getElementById('tabWmidi').click();showToast('MIDI Out ON [P]');}
-      break;
-    case 'KeyI':
-      e.preventDefault();
-      {
-        const tabIn=document.getElementById('tabMidiIn');
-        const isActive=tabIn.classList.contains('active');
-        if(isActive){document.getElementById('tabNone').click();showToast('MIDI In OFF [I]');}
-        else{tabIn.click();showToast('MIDI In ON [I]');}
-      }
-      break;
-    case 'BracketLeft':
-      e.preventDefault();
-      {
-        const sl=document.getElementById('speedSlider');
-        sl.value=Math.max(parseInt(sl.min),parseInt(sl.value)-2);
-        sl.dispatchEvent(new Event('input'));
-        showToast('Note Speed: '+sl.value+'s');
-      }
-      break;
-    case 'BracketRight':
-      e.preventDefault();
-      {
-        const sl=document.getElementById('speedSlider');
-        sl.value=Math.min(parseInt(sl.max),parseInt(sl.value)+2);
-        sl.dispatchEvent(new Event('input'));
-        showToast('Note Speed: '+sl.value+'s');
-      }
-      break;
+  if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT'||e.target.tagName==='TEXTAREA')return;
+  if(e.code==='Space'){
+    e.preventDefault();
+    document.getElementById('btnPlay').click();
+  }
+  if(e.code==='Escape'){
+    document.getElementById('btnStop').click();
+    cpPop.classList.remove('show');
+  }
+  if(e.code==='KeyO'){
+    const inp=document.createElement('input');inp.type='file';inp.accept='.mid,.midi';
+    inp.onchange=()=>{if(inp.files[0])loadMidiFile(inp.files[0]);};inp.click();
   }
 });
 
-// Init
-resizeRoll();resizeKeys();startGLLoop();
-</script>
+/* ═══ MIDI IN ═══ */
+(()=>{
+  const panel=document.getElementById('panelMidiIn');
+  panel.innerHTML=`
+    <div class="midi-row">
+      <span class="midi-status idle" id="midiInStatus">Not connected</span>
+      <button class="btn-md" id="btnMidiInRequest">Request Access</button>
+      <select class="midi-sel" id="midiInSel"><option value="">— select input —</option></select>
+      <button class="btn-md" id="btnMidiInRefresh">↺</button>
+    </div>
+    <div class="midi-note">MIDI In: play notes live on the keyboard display.</div>`;
 
-<!-- ═══ COLOR PICKER PORTAL (rainbow) ═══ -->
-<div id="chColorPickerPortal" style="display:none;position:fixed;z-index:99999;background:rgba(10,8,32,.97);border:1px solid rgba(167,139,250,.35);border-radius:14px;padding:12px 14px;box-shadow:0 8px 40px rgba(0,0,0,.75);flex-direction:column;gap:9px;min-width:225px">
-  <div style="font-size:.62rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:rgba(196,181,253,.4)">Channel <span id="cpChNum2"></span> · Color</div>
-  <canvas id="cpRainbow" width="200" height="30" style="border-radius:6px;cursor:crosshair;width:100%;display:block"></canvas>
-  <div style="display:flex;align-items:center;gap:7px">
-    <input type="color" id="cpNativeInput" style="width:34px;height:28px;border:1px solid rgba(167,139,250,.25);border-radius:5px;background:none;padding:0;cursor:pointer;flex-shrink:0">
-    <span style="font-size:.58rem;color:rgba(196,181,253,.35)">or pick from rainbow ↑</span>
-  </div>
-  <div id="cpDefaultSwatches" style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px"></div>
-  <button id="cpCloseBtn" style="font-size:.66rem;padding:.2rem .65rem;border-radius:6px;border:1px solid rgba(167,139,250,.22);background:rgba(99,63,210,.14);color:#a78bfa;cursor:pointer;align-self:flex-end">✕ Close</button>
-</div>
+  let _midiInAccess=null,_midiInPort=null;
+  const liveKeys=new Map();
 
-<script>
-/* ═══ CH COLOR PICKER PORTAL ═══ */
-(function(){
-  const portal=document.getElementById('chColorPickerPortal');
-  let activeCh=-1;
-  function drawRainbow(){
-    const cv=document.getElementById('cpRainbow'),cx=cv.getContext('2d');
-    const g=cx.createLinearGradient(0,0,cv.width,0);
-    for(let h=0;h<=360;h+=30)g.addColorStop(h/360,`hsl(${h},100%,55%)`);
-    cx.fillStyle=g;cx.fillRect(0,0,cv.width,cv.height);
-    const g2=cx.createLinearGradient(0,0,0,cv.height);
-    g2.addColorStop(0,'rgba(255,255,255,0)');g2.addColorStop(1,'rgba(0,0,0,.35)');
-    cx.fillStyle=g2;cx.fillRect(0,0,cv.width,cv.height);
-  }
-  function openPicker(chIdx,anchor){
-    activeCh=chIdx;
-    document.getElementById('cpChNum2').textContent=chIdx+1;
-    document.getElementById('cpNativeInput').value=CH_CSS[chIdx];
-    drawRainbow();
-    const sw=document.getElementById('cpDefaultSwatches');sw.innerHTML='';
-    ['#818cf8','#a78bfa','#c4b5fd','#e879f9','#fb923c','#facc15','#f87171','#fb7185',
-     '#38bdf8','#60a5fa','#34d399','#22d3ee','#4ade80','#a3e635','#fbbf24','#f472b6'].forEach(c=>{
-      const d=document.createElement('div');
-      d.style.cssText=`width:100%;aspect-ratio:1;border-radius:5px;background:${c};cursor:pointer;border:2px solid rgba(255,255,255,.12);transition:transform 90ms`;
-      d.onmouseenter=()=>{d.style.transform='scale(1.18)'};
-      d.onmouseleave=()=>{d.style.transform=''};
-      d.addEventListener('click',()=>applyColor(c));
-      sw.appendChild(d);
-    });
-    portal.style.display='flex';
-    const r=anchor.getBoundingClientRect();
-    let top=r.bottom+6,left=r.left;
-    if(left+240>innerWidth)left=innerWidth-248;
-    if(top+260>innerHeight)top=r.top-268;
-    portal.style.top=Math.max(6,top)+'px';
-    portal.style.left=Math.max(6,left)+'px';
-  }
-  function applyColor(hex){
-    if(activeCh<0)return;
-    CH_CSS[activeCh]=hex;saveChColors();
-    document.getElementById('cpNativeInput').value=hex;
-    document.querySelectorAll(`.ch-chip[data-ch="${activeCh}"]`).forEach(el=>{
-      el.style.cssText=`background:${hex}22;border-color:${hex}55;color:${hex};cursor:pointer`;
-      const dot=el.querySelector('.ch-dot');if(dot)dot.style.background=hex;
-    });
-    updateGLColors();drawKeys();
-  }
-  document.getElementById('cpRainbow').addEventListener('click',e=>{
-    const cv=document.getElementById('cpRainbow'),r=cv.getBoundingClientRect();
-    const x=Math.max(0,Math.min(cv.width-1,Math.round((e.clientX-r.left)*(cv.width/r.width))));
-    const y=Math.max(0,Math.min(cv.height-1,Math.round((e.clientY-r.top)*(cv.height/r.height))));
-    const d=cv.getContext('2d').getImageData(x,y,1,1).data;
-    applyColor('#'+[d[0],d[1],d[2]].map(v=>v.toString(16).padStart(2,'0')).join(''));
-  });
-  document.getElementById('cpNativeInput').addEventListener('input',e=>applyColor(e.target.value));
-  document.getElementById('cpCloseBtn').addEventListener('click',()=>{portal.style.display='none';activeCh=-1;});
-  document.addEventListener('mousedown',e=>{
-    if(portal.style.display==='flex'&&!portal.contains(e.target)&&!e.target.closest('.ch-chip')){
-      portal.style.display='none';activeCh=-1;
+  window._midiInReset=()=>{
+    liveKeys.forEach((_,note)=>{keyColors[note]=null;});
+    liveKeys.clear();markKeysDirty();
+  };
+  window._midiInDrawHook=null;
+
+  function _midiInMsg(e){
+    const [st,note,vel]=e.data;
+    const hi=st>>4;
+    const ch=st&0xF;
+    if(hi===0x9&&vel>0){
+      keyColors[note]=CH_CSS[ch%16];liveKeys.set(note,ch);markKeysDirty();
+      if(midiEnabled&&midiOutput)_enqueueMidi([0x90|ch,note,vel],performance.now());
+    }else if(hi===0x8||(hi===0x9&&vel===0)){
+      if(liveKeys.has(note)){keyColors[note]=null;liveKeys.delete(note);markKeysDirty();}
+      if(midiEnabled&&midiOutput)_enqueueMidi([0x80|ch,note,0],performance.now());
     }
-  });
-  window._openChColorPicker=openPicker;
-})();
-</script>
-
-<!-- ═══ MIDI IN ═══ -->
-<script>
-(function(){
-  let midiInAccess=null,midiInPort=null;
-  const liveNotes=new Map();
-  const finishedNotes=[];
-  const WINDOW=8;
-  let _ovCanvas=null;
-
-  const panelIn=document.getElementById('panelMidiIn');
-  if(panelIn){
-    panelIn.innerHTML=`
-      <div class="midi-row">
-        <span class="midi-status idle" id="midiInStatus2">Not started</span>
-        <button class="btn-md" id="btnMidiInRequest2">Request access</button>
-        <select class="midi-sel" id="midiInSel2"><option value="">— select input —</option></select>
-        <button class="btn-md" id="btnMidiInRefresh2">↺</button>
-      </div>
-      <div class="midi-note">Notes played on your MIDI keyboard appear in the piano roll. Routed directly to active MIDI Out.</div>`;
   }
 
-  function setStatus(t,txt){
-    const el=document.getElementById('midiInStatus2');
-    if(el){el.className='midi-status '+t;el.textContent=txt;}
-  }
-
-  function refreshInputs(){
-    if(!midiInAccess)return;
-    const sel=document.getElementById('midiInSel2');if(!sel)return;
-    const prev=sel.value;sel.innerHTML='<option value="">— select input —</option>';
-    midiInAccess.inputs.forEach((p,id)=>{
+  function _midiInRefresh(){
+    if(!_midiInAccess)return;
+    const sel=document.getElementById('midiInSel');
+    const prev=sel.value;
+    sel.innerHTML='<option value="">— select input —</option>';
+    _midiInAccess.inputs.forEach((p,id)=>{
       const o=document.createElement('option');o.value=id;o.textContent=p.name;sel.appendChild(o);
     });
     if(prev)sel.value=prev;
-    if(sel.value&&midiInAccess.inputs.get(sel.value))attachPort(midiInAccess.inputs.get(sel.value));
-  }
-
-  let _buf=[],_expected=0;
-  function _bytesNeeded(st){
-    const hi=st>>4;
-    if(hi===0xC||hi===0xD)return 1;
-    if(st===0xF1||st===0xF3)return 1;
-    if(st===0xF2)return 2;
-    if(st>=0xF4)return 0;
-    return 2;
-  }
-  function _dispatch(d){
-    if(!d||!d.length)return;
-    const st=d[0],hi=st>>4,ch=st&0xF;
-    const n=d[1]??0,v=d[2]??64;
-    if(hi===0x9&&v>0){
-      keyColors[n]=CH_CSS[ch%16];markKeysDirty();
-      midiNoteOn(ch,n,v);
-      liveNotes.set(n,{startT:performance.now()/1000,ch,vel:v});
-    }else if(hi===0x8||(hi===0x9&&v===0)){
-      keyColors[n]=null;markKeysDirty();
-      midiNoteOff(ch,n);
-      if(liveNotes.has(n)){
-        const info=liveNotes.get(n);
-        finishedNotes.push({note:n,startT:info.startT,endT:performance.now()/1000,ch:info.ch,vel:info.vel});
-        liveNotes.delete(n);
-      }
-    }else if(hi===0xB){
-      if(midiEnabled&&midiOutput)try{midiOutput.send([st,n,v])}catch(_){}
-    }
-  }
-  function onMsg(e){
-    const data=Array.from(e.data);
-    for(const byte of data){
-      if(byte>=0x80){
-        _buf=[byte];_expected=_bytesNeeded(byte);
-        if(_expected===0){_dispatch(_buf);_buf=[];}
-      }else{
-        _buf.push(byte);
-        if(_buf.length>=_expected+1){_dispatch(_buf);_buf=[_buf[0]];}
+    if(sel.value){
+      const port=_midiInAccess.inputs.get(sel.value);
+      if(port&&port!==_midiInPort){
+        if(_midiInPort)_midiInPort.onmidimessage=null;
+        _midiInPort=port;_midiInPort.onmidimessage=_midiInMsg;
+        document.getElementById('midiInStatus').className='midi-status ok';
+        document.getElementById('midiInStatus').textContent='← '+port.name;
       }
     }
   }
 
-  function attachPort(port){
-    if(midiInPort)midiInPort.onmidimessage=null;
-    midiInPort=port;
-    if(port){port.onmidimessage=onMsg;setStatus('ok','← '+port.name);}
-  }
-
-  document.getElementById('btnMidiInRequest2')?.addEventListener('click',async()=>{
+  document.getElementById('btnMidiInRequest').addEventListener('click',async()=>{
     try{
-      midiInAccess=await navigator.requestMIDIAccess({sysex:false});
-      setStatus('ok','Access granted');refreshInputs();
-      midiInAccess.onstatechange=refreshInputs;
-    }catch(err){setStatus('err','Denied: '+err.message);}
+      _midiInAccess=await navigator.requestMIDIAccess({sysex:false});
+      document.getElementById('midiInStatus').className='midi-status ok';
+      document.getElementById('midiInStatus').textContent='Access granted';
+      _midiInRefresh();
+      _midiInAccess.onstatechange=_midiInRefresh;
+    }catch(err){
+      document.getElementById('midiInStatus').className='midi-status err';
+      document.getElementById('midiInStatus').textContent='Denied: '+err.message;
+    }
   });
-  document.getElementById('midiInSel2')?.addEventListener('change',e=>{
-    const p=midiInAccess&&e.target.value?midiInAccess.inputs.get(e.target.value):null;
-    attachPort(p);
+
+  document.getElementById('btnMidiInRefresh').addEventListener('click',_midiInRefresh);
+
+  document.getElementById('midiInSel').addEventListener('change',e=>{
+    if(_midiInPort){_midiInPort.onmidimessage=null;_midiInPort=null;}
+    if(!e.target.value){document.getElementById('midiInStatus').className='midi-status idle';document.getElementById('midiInStatus').textContent='No input';return;}
+    const port=_midiInAccess&&_midiInAccess.inputs.get(e.target.value);
+    if(port){
+      _midiInPort=port;_midiInPort.onmidimessage=_midiInMsg;
+      document.getElementById('midiInStatus').className='midi-status ok';
+      document.getElementById('midiInStatus').textContent='← '+port.name;
+    }
   });
-  document.getElementById('btnMidiInRefresh2')?.addEventListener('click',refreshInputs);
+})();
 
-  function getOverlay(){
-    if(_ovCanvas)return _ovCanvas;
-    _ovCanvas=document.createElement('canvas');
-    _ovCanvas.id='midiInOverlay';
-    _ovCanvas.style.cssText='position:absolute;inset:0;pointer-events:none;z-index:10';
-    const wrap=document.getElementById('rollWrap');if(wrap)wrap.appendChild(_ovCanvas);
-    return _ovCanvas;
+/* ═══ INIT ═══ */
+(()=>{
+  resizeKeys();
+  resizeRoll();
+  startGLLoop();
+  document.getElementById('speedVal').textContent=NOTE_SPEED+'s';
+  document.getElementById('postBufVal').textContent='auto';
+  _recalcPreBuffer();
+  updateGLColors();
+  document.getElementById('btnPlay').disabled=true;
+
+  // Observer para re-calcular tamaño del canvas cuando la columna derecha cambia
+  if(window.ResizeObserver){
+    const ro=new ResizeObserver(()=>{resizeRoll();resizeKeys();});
+    ro.observe(document.getElementById('rollWrap'));
+    ro.observe(document.getElementById('keysWrap'));
   }
-
-  function drawMidiIn(){
-    const ov=getOverlay();
-    const W=rollCanvas.width,H=rollCanvas.height;
-    if(ov.width!==W||ov.height!==H){ov.width=W;ov.height=H;}
-    const ctx=ov.getContext('2d');
-    ctx.clearRect(0,0,W,H);
-    if(!liveNotes.size&&!finishedNotes.length)return;
-    const now=performance.now()/1000;
-    const plo=0,phi=128;
-    const pRange=phi-plo;
-    const tRange=WINDOW;
-    const cutoff=now-WINDOW;
-    while(finishedNotes.length&&finishedNotes[0].endT<cutoff)finishedNotes.shift();
-    const drawNote=(note,startT,endT,ch)=>{
-      const col=CH_CSS[ch%16];
-      const x0=Math.floor((1-(startT-now+WINDOW)/tRange*(1-PLAYHEAD_FRAC)-PLAYHEAD_FRAC)*W);
-      const x1=Math.floor((1-(endT-now+WINDOW)/tRange*(1-PLAYHEAD_FRAC)-PLAYHEAD_FRAC)*W);
-      const y=H-(note-plo)/pRange*H;
-      const h=Math.max(2,H/pRange-1);
-      const x=Math.min(x0,x1),w=Math.max(3,Math.abs(x1-x0));
-      ctx.fillStyle=col+'cc';ctx.fillRect(x,y-h,w,h);
-      ctx.strokeStyle=col;ctx.lineWidth=1;ctx.strokeRect(x,y-h,w,h);
-    };
-    finishedNotes.forEach(n=>drawNote(n.note,n.startT,n.endT,n.ch));
-    liveNotes.forEach((info,note)=>drawNote(note,info.startT,now+0.05,info.ch));
-  }
-
-  window._midiInReset=function(){
-    liveNotes.clear();finishedNotes.length=0;
-    if(midiInPort)midiInPort.onmidimessage=null;
-    _buf=[];_expected=0;
-    const ov=document.getElementById('midiInOverlay');
-    if(ov){const ctx=ov.getContext('2d');ctx.clearRect(0,0,ov.width,ov.height);}
-    if(midiInPort)midiInPort.onmidimessage=onMsg;
-    keyColors.fill(null);markKeysDirty();
-  };
-
-  window._midiInDrawHook=drawMidiIn;
 })();
 </script>
-
 </body>
 </html>
