@@ -233,7 +233,6 @@ footer a:hover{color:#a78bfa}
     </div>
   </div>
 
-  <!-- ✅ FIX: Speed slider ahora controla el zoom temporal del piano roll (segundos visibles hacia adelante) -->
   <div class="speed-row">
     <span class="speed-lbl">Note Speed</span>
     <input type="range" class="speed" id="speedSlider" min="2" max="60" step="1" value="20">
@@ -479,7 +478,6 @@ self.onmessage = function(e) {
   flushChunk(true);
 };
 </script>
-
 <script>
 'use strict';
 
@@ -602,11 +600,24 @@ function showAchieve(id,icon,title,val,sub){
   setTimeout(()=>{el.classList.add('hide');setTimeout(()=>el.remove(),320);},5000);
 }
 
-/* ═══ BUFFER CONFIG ═══ */
-/* ✅ FIX: PRE_BUFFER ahora lo controla exclusivamente el speedSlider */
-let PRE_BUFFER = 20;
-let POST_BUFFER = 0;
+/* ═══════════════════════════════════════════════════════
+   ★ BUFFER CONFIG — NOTE_SPEED y PRE_BUFFER son independientes
+   - NOTE_SPEED : ventana visual del piano roll (slider)
+   - PRE_BUFFER : ventana de carga en GPU (siempre >= NOTE_SPEED + margen)
+   - POST_BUFFER: cuánto tiempo "atrás" se mantiene en GPU (auto)
+   ════════════════════════════════════════════════════════ */
+let NOTE_SPEED  = 20;          // ★ solo visual — segundos visibles hacia adelante
+let PRE_BUFFER  = 30;          // ★ independiente — datos cargados en GPU (siempre mayor)
+let POST_BUFFER = 0;           // autoajustable según duración de notas largas
 let _longestExitedNote = 0;
+
+// ★ Margen mínimo extra sobre NOTE_SPEED para el buffer de GPU
+const PRE_BUFFER_MARGIN = 8;
+
+// ★ Recalcula PRE_BUFFER para que siempre sea suficiente sin importar NOTE_SPEED
+function _recalcPreBuffer(){
+  PRE_BUFFER = Math.max(NOTE_SPEED + PRE_BUFFER_MARGIN, 30);
+}
 
 function _updatePostBuffer(noteDuration){
   if(noteDuration > _longestExitedNote){
@@ -616,11 +627,13 @@ function _updatePostBuffer(noteDuration){
   }
 }
 
-/* ✅ FIX PRINCIPAL: speedSlider actualiza PRE_BUFFER y recarga la caché/visualización */
+// ★ speedSlider solo actualiza NOTE_SPEED — PRE_BUFFER se recalcula independientemente
 document.getElementById('speedSlider').addEventListener('input', e => {
-  PRE_BUFFER = parseInt(e.target.value);
-  document.getElementById('speedVal').textContent = PRE_BUFFER + 's';
-  if(noteData) _uploadCacheWindow(currentTime);
+  NOTE_SPEED = parseInt(e.target.value);
+  document.getElementById('speedVal').textContent = NOTE_SPEED + 's';
+  _recalcPreBuffer();
+  // El cache solo se recarga si la ventana visual creció más allá del buffer actual
+  if(noteData && NOTE_SPEED > _cacheEnd - currentTime) _uploadCacheWindow(currentTime);
 });
 
 /* ═══ WEBGL2 ═══ */
@@ -628,6 +641,7 @@ const PIANO_LO = 0;
 const PIANO_HI = 127;
 const PLAYHEAD_FRAC = 0.02;
 
+// ★ El shader usa u_ah = NOTE_SPEED (visual), no PRE_BUFFER
 const VERT=`#version 300 es
 precision highp float;
 in float a_s,a_e,a_p,a_c,a_v;
@@ -693,6 +707,7 @@ let _cacheStart=0,_cacheEnd=0;
 
 function _uploadCacheWindow(t){
   if(!wglOk||!noteData||noteCount===0)return;
+  // ★ El cache usa PRE_BUFFER (grande), no NOTE_SPEED
   const winStart=Math.max(0,t-POST_BUFFER);
   const winEnd=Math.min(fileDuration,t+PRE_BUFFER);
   _cacheStart=winStart;_cacheEnd=winEnd;
@@ -714,8 +729,9 @@ function _uploadCacheWindow(t){
 
 function _tickCacheRefill(t){
   if(!wglOk||!noteData)return;
+  // ★ El refill se basa en PRE_BUFFER, no en NOTE_SPEED
   const remaining=_cacheEnd-t;
-  if(remaining<PRE_BUFFER*0.2||t<_cacheStart)_uploadCacheWindow(t);
+  if(remaining<PRE_BUFFER*0.25||t<_cacheStart)_uploadCacheWindow(t);
 }
 
 function _rebindVAO(){
@@ -742,7 +758,8 @@ function renderFrame(t){
   if(totalVboNotes>0){
     gl.useProgram(glProg);updateGLColors();
     gl.uniform1f(uT,t);
-    gl.uniform1f(uAh,PRE_BUFFER);
+    // ★ u_ah recibe NOTE_SPEED (visual), u_bh recibe POST_BUFFER
+    gl.uniform1f(uAh,NOTE_SPEED);
     gl.uniform1f(uBh,POST_BUFFER);
     gl.bindVertexArray(vao);gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,totalVboNotes);gl.bindVertexArray(null);
   }
@@ -1012,6 +1029,8 @@ function handleWorkerMsg(ev){
       buildSortedArrays();
       _longestExitedNote=0;POST_BUFFER=0;
       document.getElementById('postBufVal').textContent='0.0s';
+      // ★ Al cargar archivo se recalcula PRE_BUFFER y se sube el cache
+      _recalcPreBuffer();
       if(wglOk){_cacheStart=0;_cacheEnd=0;_uploadCacheWindow(0);}
       const channels=new Set();for(let i=0;i<noteCount;i++)channels.add(noteData[i*5+3]|0);
       finalizeMidi(channels);
@@ -1541,7 +1560,6 @@ document.addEventListener('keydown',e=>{
         else{tabIn.click();showToast('MIDI In ON [I]');}
       }
       break;
-    /* ✅ FIX: Atajos de teclado para Note Speed — teclas [ y ] */
     case 'BracketLeft':
       e.preventDefault();
       {
