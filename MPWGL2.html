@@ -335,6 +335,7 @@ footer a:hover{color:#a78bfa}
   <button class="btn-md" id="cpClose" style="align-self:flex-end">✕ Close</button>
 </div>
 <div id="toast"></div>
+
 <!-- ═══ WEB WORKER — embedded MIDI parser ═══ -->
 <script id="workerSrc" type="text/plain">
 'use strict';
@@ -477,7 +478,6 @@ self.onmessage = function(e) {
   flushChunk(true);
 };
 </script>
-
 <script>
 'use strict';
 
@@ -601,18 +601,29 @@ function showAchieve(id,icon,title,val,sub){
 }
 
 /* ═══ BUFFER CONFIG ═══ */
-let NOTE_SPEED  = 20;   // segundos hacia adelante visibles (futuro)
-let POST_BUFFER = 4;    // segundos hacia atrás visibles (pasado) — FIJO, SharpMIDI-style
-let PRE_BUFFER  = 30;   // ventana de carga del VBO
+let NOTE_SPEED  = 20;
+let POST_BUFFER = 4;
+let PRE_BUFFER  = 30;
 const PRE_BUFFER_MARGIN = 8;
 let _longestExitedNote = 0;
+
+/* ─── PLAYHEAD y offset de sincronización ─── */
+const PLAYHEAD_FRAC   = 0.18;
+// Segundos de anticipación que el scheduler debe disparar antes de que
+// la nota llegue visualmente al playhead.
+// Una nota con startSec=S llega al playhead cuando currentTime = S,
+// porque el shader coloca startSec exactamente en PLAYHEAD_FRAC cuando t == startSec.
+// Por tanto NO hay offset adicional — el scheduler dispara cuando startArr[i] < now + horizon,
+// y el render muestra la nota llegando al playhead justo en t == startSec.
+// El único ajuste necesario es que el RENDER use `currentTime` directamente
+// y el scheduler use `currentTime` directamente también.
+// Esto ya está correcto — la causa del desync anterior era el ping-pong scroll
+// que acumulaba un retraso visual de ~scrollUV * NOTE_SPEED segundos.
 
 function _recalcPreBuffer(){
   PRE_BUFFER = Math.max(NOTE_SPEED + PRE_BUFFER_MARGIN, 30);
 }
-// POST_BUFFER es fijo en 4s (pasado visible), no dinámico
 function _updatePostBuffer(noteDuration){
-  // Solo trackea la nota más larga para estadísticas; POST_BUFFER es fijo
   if(noteDuration > _longestExitedNote) _longestExitedNote = noteDuration;
 }
 
@@ -624,74 +635,45 @@ document.getElementById('speedSlider').addEventListener('input', e => {
   if(noteData) _uploadCacheWindow(currentTime);
 });
 
-/* ═══════════════════════════════════════════════════════════
-   WEBGL2 — GPU PING-PONG SCROLL (SharpMIDI-style corrected)
-   ═══════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════
+   WEBGL2 — DIRECT DRAW (sin ping-pong, sin motion blur)
+   Cada frame: limpiar canvas → dibujar todas las notas
+               visibles → playhead con scissor.
+   ═══════════════════════════════════════════════════════ */
 
-const PLAYHEAD_FRAC = 0.18; // posición X del playhead (18% desde la izquierda)
-
-/* ── Quad vertex shader (reutilizado por scroll y blit) ── */
-const SRC_QUAD_VERT = `#version 300 es
-precision highp float;
-const vec2 P[4]=vec2[](vec2(-1,-1),vec2(1,-1),vec2(-1,1),vec2(1,1));
-const vec2 U[4]=vec2[](vec2(0,0),vec2(1,0),vec2(0,1),vec2(1,1));
-out vec2 v_uv;
-void main(){ gl_Position=vec4(P[gl_VertexID],0,1); v_uv=U[gl_VertexID]; }`;
-
-/* ── Scroll: desplaza la textura anterior a la izquierda, limpia franja derecha ── */
-const SRC_SCROLL_FRAG = `#version 300 es
-precision mediump float;
-in vec2 v_uv;
-uniform sampler2D u_prev;
-uniform float u_scrollUV;   // fracción UV a desplazar
-uniform float u_clearFrom;  // UV X desde donde limpiar (zona nueva)
-out vec4 o;
-void main(){
-  float sx = v_uv.x + u_scrollUV;
-  if(sx >= 1.0 || v_uv.x >= u_clearFrom){
-    o = vec4(0.0);
-  } else {
-    o = texture(u_prev, vec2(sx, v_uv.y));
-  }
-}`;
-
-/* ── Strip: dibuja SOLO las notas que caen en la franja nueva (derecha del canvas)
-   Clave: descarta notas cuyo rango NDC no solapa con [u_stripX, 1.0]           ── */
+/* ── Strip vertex shader ── */
 const SRC_STRIP_VERT = `#version 300 es
 precision highp float;
 in float a_s, a_e, a_p, a_c, a_v;
-uniform float u_t;        // tiempo actual
-uniform float u_ah;       // segundos hacia adelante (NOTE_SPEED)
-uniform float u_bh;       // segundos hacia atrás    (POST_BUFFER)
-uniform float u_stripX;   // NDC X inicio de la franja nueva
+uniform float u_t;
+uniform float u_ah;   // segundos visibles hacia la derecha del playhead (futuro)
+uniform float u_bh;   // segundos visibles hacia la izquierda del playhead (pasado)
 uniform vec3  u_chColors[16];
 out vec3  v_col;
 out float v_act;
 
 void main(){
-  float winLen = u_ah + u_bh;
+  float winLen   = u_ah + u_bh;
   float winStart = u_t - u_bh;
 
-  // Posición NDC de inicio y fin de la nota en la ventana temporal completa
+  // NDC X: playhead en PLAYHEAD_FRAC => nota con startSec==u_t está exactamente ahí
   float xStartNDC = ((a_s - winStart) / winLen) * 2.0 - 1.0;
   float xEndNDC   = ((a_e - winStart) / winLen) * 2.0 - 1.0;
 
-  // Descartar notas completamente fuera de la franja nueva
-  if(xEndNDC < u_stripX || xStartNDC > 1.0){
+  // Descartar notas completamente fuera de la ventana visible
+  if(xEndNDC < -1.0 || xStartNDC > 1.0){
     gl_Position = vec4(10.0, 10.0, 0.0, 1.0);
     v_col = vec3(0.0); v_act = 0.0;
     return;
   }
 
-  // Clamp a la franja [u_stripX, 1.0]
-  float xL = max(xStartNDC, u_stripX);
-  float xR = min(xEndNDC,   1.0);
+  float xL = max(xStartNDC, -1.0);
+  float xR = min(xEndNDC,    1.0);
 
-  // Quad instanced: 4 vértices (TRIANGLE_STRIP) BL=0, BR=1, TL=2, TR=3
   bool isRight = (gl_VertexID == 1 || gl_VertexID == 3);
   bool isTop   = (gl_VertexID == 2 || gl_VertexID == 3);
 
-  float x = isRight ? xR : xL;
+  float x  = isRight ? xR : xL;
   float nh = 1.0 / 128.0;
   float y  = isTop ? (a_p / 128.0 + nh) : (a_p / 128.0);
   y = y * 2.0 - 1.0;
@@ -712,17 +694,18 @@ void main(){
   o = vec4(c, 1.0);
 }`;
 
-/* ── Blit: renderiza la textura al canvas con fondo ── */
-const SRC_BLIT_FRAG = `#version 300 es
+/* ── Quad vert (para blit de fondo) ── */
+const SRC_QUAD_VERT = `#version 300 es
+precision highp float;
+const vec2 P[4]=vec2[](vec2(-1,-1),vec2(1,-1),vec2(-1,1),vec2(1,1));
+out vec2 v_uv;
+void main(){ gl_Position=vec4(P[gl_VertexID],0,1); v_uv=vec2(P[gl_VertexID]*.5+.5); }`;
+
+const SRC_BG_FRAG = `#version 300 es
 precision mediump float;
 in vec2 v_uv;
-uniform sampler2D u_tex;
 out vec4 o;
-void main(){
-  vec4 s = texture(u_tex, v_uv);
-  vec3 bg = vec3(0.01, 0.007, 0.028);
-  o = vec4(s.a > 0.01 ? s.rgb : bg, 1.0);
-}`;
+void main(){ o = vec4(0.012, 0.007, 0.026, 1.0); }`;
 
 /* ── GL context ── */
 const rollCanvas = document.getElementById('rollCanvas');
@@ -733,17 +716,10 @@ const gl = rollCanvas.getContext('webgl2',{
 });
 const wglOk = !!gl;
 
-let glProgScroll, glProgStrip, glProgBlit;
-let uScroll_prev, uScroll_scrollUV, uScroll_clearFrom;
-let uStrip_t, uStrip_ah, uStrip_bh, uStrip_stripX, uStrip_chColors;
-let uBlit_tex;
+let glProgStrip, glProgBg;
+let uStrip_t, uStrip_ah, uStrip_bh, uStrip_chColors;
 let stripVAO, stripIVBO, totalVboNotes = 0;
 let _vboCap = 4000000;
-
-/* ── FBO ping-pong ── */
-let pingFBO, pongFBO, pingTex, pongTex;
-let _fboW = 0, _fboH = 0;
-let _readFBO, _readTex, _writeFBO, _writeTex;
 let _fboInvalid = true;
 
 function _csh(src, type){
@@ -763,63 +739,17 @@ function _linkProg(vSrc, fSrc){
   return p;
 }
 
-function _createFBOTex(w, h){
-  const tex = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, tex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  const fbo = gl.createFramebuffer();
-  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  gl.bindTexture(gl.TEXTURE_2D, null);
-  return { fbo, tex };
-}
-
-function _ensureFBOs(w, h){
-  if(_fboW === w && _fboH === h) return;
-  _fboW = w; _fboH = h;
-  if(pingFBO){ gl.deleteFramebuffer(pingFBO); gl.deleteTexture(pingTex); }
-  if(pongFBO){ gl.deleteFramebuffer(pongFBO); gl.deleteTexture(pongTex); }
-  const a = _createFBOTex(w, h);
-  const b = _createFBOTex(w, h);
-  pingFBO = a.fbo; pingTex = a.tex;
-  pongFBO = b.fbo; pongTex = b.tex;
-  _readFBO = pingFBO; _readTex = pingTex;
-  _writeFBO = pongFBO; _writeTex = pongTex;
-  gl.bindFramebuffer(gl.FRAMEBUFFER, pingFBO);
-  gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, pongFBO);
-  gl.clear(gl.COLOR_BUFFER_BIT);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  _fboInvalid = true;
-}
-
-function _swapFBOs(){
-  const tf = _readFBO, tt = _readTex;
-  _readFBO = _writeFBO; _readTex = _writeTex;
-  _writeFBO = tf; _writeTex = tt;
-}
+/* Stub para compatibilidad con código que llama _ensureFBOs */
+function _ensureFBOs(w, h){ /* no-op en direct draw */ }
 
 if(wglOk){
-  glProgScroll = _linkProg(SRC_QUAD_VERT, SRC_SCROLL_FRAG);
-  glProgStrip  = _linkProg(SRC_STRIP_VERT, SRC_STRIP_FRAG);
-  glProgBlit   = _linkProg(SRC_QUAD_VERT, SRC_BLIT_FRAG);
-
-  uScroll_prev      = gl.getUniformLocation(glProgScroll, 'u_prev');
-  uScroll_scrollUV  = gl.getUniformLocation(glProgScroll, 'u_scrollUV');
-  uScroll_clearFrom = gl.getUniformLocation(glProgScroll, 'u_clearFrom');
+  glProgStrip = _linkProg(SRC_STRIP_VERT, SRC_STRIP_FRAG);
+  glProgBg    = _linkProg(SRC_QUAD_VERT,  SRC_BG_FRAG);
 
   uStrip_t        = gl.getUniformLocation(glProgStrip, 'u_t');
   uStrip_ah       = gl.getUniformLocation(glProgStrip, 'u_ah');
   uStrip_bh       = gl.getUniformLocation(glProgStrip, 'u_bh');
-  uStrip_stripX   = gl.getUniformLocation(glProgStrip, 'u_stripX');
   uStrip_chColors = gl.getUniformLocation(glProgStrip, 'u_chColors');
-
-  uBlit_tex = gl.getUniformLocation(glProgBlit, 'u_tex');
 
   /* VAO + VBO instanced — interleaved: s, e, p, c, v (5 floats/nota) */
   stripVAO = gl.createVertexArray();
@@ -893,12 +823,10 @@ function updateGLColors(){
 }
 
 /* ══════════════════════════════════════════════════════
-   RENDER FRAME — SharpMIDI ping-pong corregido:
-   1. Scroll: desplazar textura anterior a la izquierda
-   2. Strip:  dibujar SOLO notas en la franja nueva
-   3. Swap:   intercambiar read/write FBO
-   4. Blit:   copiar al canvas con fondo
-   5. Playhead: línea vertical con scissor
+   RENDER FRAME — Direct draw, zero ping-pong blur
+   Paso 1: fondo sólido
+   Paso 2: dibujar todas las notas visibles
+   Paso 3: playhead con scissor
    ══════════════════════════════════════════════════════ */
 let _lastRenderT = -9999;
 
@@ -907,67 +835,41 @@ function renderFrame(t){
   const w = rollCanvas.width, h = rollCanvas.height;
   if(w < 4 || h < 4) return;
 
-  _ensureFBOs(w, h);
   gl.viewport(0, 0, w, h);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
-  const totalSec = NOTE_SPEED + POST_BUFFER; // ventana temporal total visible
-
-  // En full-redraw (seek/resize/inicio) el scroll cubre toda la ventana
-  const dt = _fboInvalid ? totalSec : Math.max(0, t - _lastRenderT);
-  _fboInvalid = false;
-
-  // scrollUV: fracción de la textura a desplazar (equivale a dt/totalSec columnas)
-  const scrollUV  = Math.min(dt / totalSec, 1.0);
-  // clearFrom: UV X desde donde empieza la zona limpia (franja nueva a redibujar)
-  const clearFrom = Math.max(0.0, 1.0 - scrollUV);
-  // NDC X equivalente para el strip shader
-  const stripNDC  = clearFrom * 2.0 - 1.0;
-
-  /* ── PASO 1: Scroll ── */
-  gl.bindFramebuffer(gl.FRAMEBUFFER, _writeFBO);
-  gl.useProgram(glProgScroll);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, _readTex);
-  gl.uniform1i(uScroll_prev,      0);
-  gl.uniform1f(uScroll_scrollUV,  scrollUV);
-  gl.uniform1f(uScroll_clearFrom, clearFrom);
+  /* ── Paso 1: Fondo ── */
+  gl.disable(gl.BLEND);
+  gl.useProgram(glProgBg);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-  /* ── PASO 2: Strip — notas en la franja nueva SOLAMENTE ── */
+  /* ── Paso 2: Notas ── */
   if(totalVboNotes > 0){
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.useProgram(glProgStrip);
+
     const flat = new Float32Array(48);
     for(let i = 0; i < 16; i++){
       const [r,g,b] = hexToRgb01(CH_CSS[i]);
-      flat[i*3] = r; flat[i*3+1] = g; flat[i*3+2] = b;
+      flat[i*3]=r; flat[i*3+1]=g; flat[i*3+2]=b;
     }
     gl.uniform3fv(uStrip_chColors, flat);
-    gl.uniform1f(uStrip_t,       t);
-    gl.uniform1f(uStrip_ah,      NOTE_SPEED);
-    gl.uniform1f(uStrip_bh,      POST_BUFFER);
-    gl.uniform1f(uStrip_stripX,  stripNDC);
+
+    /* u_ah: segundos visibles a la DERECHA del playhead (futuro)
+       u_bh: segundos visibles a la IZQUIERDA del playhead (pasado)
+       El shader coloca startSec == t exactamente en NDC X = PLAYHEAD_FRAC*2-1 */
+    gl.uniform1f(uStrip_t,  t);
+    gl.uniform1f(uStrip_ah, NOTE_SPEED * (1.0 - PLAYHEAD_FRAC));
+    gl.uniform1f(uStrip_bh, NOTE_SPEED * PLAYHEAD_FRAC + POST_BUFFER);
+
     gl.bindVertexArray(stripVAO);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, totalVboNotes);
     gl.bindVertexArray(null);
     gl.disable(gl.BLEND);
   }
 
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-
-  /* ── PASO 3: Swap FBOs ── */
-  _swapFBOs();
-
-  /* ── PASO 4: Blit al canvas ── */
-  gl.viewport(0, 0, w, h);
-  gl.useProgram(glProgBlit);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, _readTex);
-  gl.uniform1i(uBlit_tex, 0);
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-
-  /* ── PASO 5: Playhead ── */
+  /* ── Paso 3: Playhead — línea vertical en PLAYHEAD_FRAC ── */
   const px = Math.floor(PLAYHEAD_FRAC * w);
   gl.enable(gl.SCISSOR_TEST);
   gl.scissor(px - 1, 0, 3, h);
@@ -977,6 +879,7 @@ function renderFrame(t){
   gl.clearColor(0, 0, 0, 0);
 
   _lastRenderT = t;
+  _fboInvalid = false;
 }
 
 /* ── Resize ── */
@@ -1452,7 +1355,11 @@ function _shouldSkipVelocity(vel){
   return false;
 }
 
-/* ═══ MIDI SCHEDULER ═══ */
+/* ═══ MIDI SCHEDULER — sincronizado con playhead ═══
+   El scheduler dispara cuando startArr[i] < currentTime + SCHED_HORIZON.
+   Con direct-draw no hay retraso acumulado, así que SCHED_HORIZON = 0.25s
+   es suficiente para prebuffering de audio sin adelanto perceptible.      */
+const SCHED_HORIZON = 0.25; // segundos de look-ahead para el scheduler
 const soundingNotes=new Map();
 let dispCursor=0, _schedInterval=null;
 
@@ -1465,7 +1372,7 @@ function resetDispatch(){
 
 function _runScheduler(){
   if(!noteData||!isPlaying) return;
-  const now=currentTime, horizon=now+0.25, wallNow=performance.now();
+  const now=currentTime, horizon=now+SCHED_HORIZON, wallNow=performance.now();
   let changed=false;
 
   while(dispCursor<noteCount && startArr[dispCursor]<horizon){
@@ -1474,11 +1381,15 @@ function _runScheduler(){
     const rawVel=Math.round(noteData[i+4]*127);
     const v=Math.max(32,Math.min(127,rawVel));
     const endSec=noteData[i+1], noteDur=endSec-s;
-    const k=ch*128+p, deltaMs=Math.max(0,(s-now)*1000);
+    const k=ch*128+p;
+    /* deltaMs: cuántos ms faltan para que esta nota llegue al playhead */
+    const deltaMs=Math.max(0,(s-now)*1000);
     if(s<now-0.1) _updatePostBuffer(noteDur);
     if(s>=now-0.05){
       if(_shouldSkipVelocity(v)){ _skippedThisFrame++; }
       else{
+        /* Enviar MIDI con timestamp exacto = wallNow + deltaMs
+           así el sonido sale exactamente cuando la nota toca el playhead */
         if(midiEnabled&&midiOutput) _enqueueMidi([0x90|ch,p,v], wallNow+deltaMs);
         if(deltaMs<120){ keyColors[p]=CH_CSS[ch%16]; changed=true; }
         soundingNotes.set(k,{endSec,ch,note:p,onMs:wallNow+deltaMs});
@@ -1674,11 +1585,9 @@ document.getElementById('btnClear').addEventListener('click', e=>{
   keyColors.fill(null); markKeysDirty();
   _fboInvalid=true;
   if(wglOk){
-    gl.bindFramebuffer(gl.FRAMEBUFFER, pingFBO);
-    gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, pongFBO);
-    gl.clear(gl.COLOR_BUFFER_BIT);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.clearColor(0.012, 0.007, 0.026, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
   }
   startGLLoop();
   showToast('Cleared');
@@ -1791,7 +1700,6 @@ document.addEventListener('keydown', e=>{
   updateGLColors();
   document.getElementById('btnPlay').disabled=true;
 
-  // Segundo resize tras primer paint para garantizar dimensiones reales del layout
   setTimeout(()=>{
     resizeRoll(); resizeKeys();
     _fboInvalid=true;
