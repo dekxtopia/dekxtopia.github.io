@@ -601,524 +601,480 @@ function showAchieve(id,icon,title,val,sub){
 }
 
 /* ═══ BUFFER CONFIG ═══ */
-let NOTE_SPEED  = 20;
-let POST_BUFFER = 4;
-let PRE_BUFFER  = 30;
+let NOTE_SPEED  = 20.0;
+let POST_BUFFER = 4.0;
+let PRE_BUFFER  = 30.0;
 const PRE_BUFFER_MARGIN = 8;
 let _longestExitedNote = 0;
 
-/* ─── PLAYHEAD y offset de sincronización ─── */
-const PLAYHEAD_FRAC   = 0.18;
-// Segundos de anticipación que el scheduler debe disparar antes de que
-// la nota llegue visualmente al playhead.
-// Una nota con startSec=S llega al playhead cuando currentTime = S,
-// porque el shader coloca startSec exactamente en PLAYHEAD_FRAC cuando t == startSec.
-// Por tanto NO hay offset adicional — el scheduler dispara cuando startArr[i] < now + horizon,
-// y el render muestra la nota llegando al playhead justo en t == startSec.
-// El único ajuste necesario es que el RENDER use `currentTime` directamente
-// y el scheduler use `currentTime` directamente también.
-// Esto ya está correcto — la causa del desync anterior era el ping-pong scroll
-// que acumulaba un retraso visual de ~scrollUV * NOTE_SPEED segundos.
+const PLAYHEAD_FRAC = 0.18;
+
+/* Note Speed slider — float, rango 0.1 – 60s */
+document.getElementById('speedSlider').setAttribute('min','0.1');
+document.getElementById('speedSlider').setAttribute('max','60');
+document.getElementById('speedSlider').setAttribute('step','0.1');
+document.getElementById('speedSlider').value = NOTE_SPEED;
 
 function _recalcPreBuffer(){
   PRE_BUFFER = Math.max(NOTE_SPEED + PRE_BUFFER_MARGIN, 30);
 }
-function _updatePostBuffer(noteDuration){
-  if(noteDuration > _longestExitedNote) _longestExitedNote = noteDuration;
-}
+function _updatePostBuffer(d){ if(d>_longestExitedNote)_longestExitedNote=d; }
 
 document.getElementById('speedSlider').addEventListener('input', e => {
-  NOTE_SPEED = parseInt(e.target.value);
-  document.getElementById('speedVal').textContent = NOTE_SPEED + 's';
+  NOTE_SPEED = Math.max(0.1, parseFloat(e.target.value));
+  document.getElementById('speedVal').textContent = NOTE_SPEED.toFixed(1)+'s';
   _recalcPreBuffer();
   _fboInvalid = true;
   if(noteData) _uploadCacheWindow(currentTime);
 });
 
 /* ═══════════════════════════════════════════════════════
-   WEBGL2 — DIRECT DRAW (sin ping-pong, sin motion blur)
-   Cada frame: limpiar canvas → dibujar todas las notas
-               visibles → playhead con scissor.
+   WEBGL2 — DIRECT DRAW con transparencia
+   alpha:true → el neural canvas se ve a través del fondo
+   Limpiar con clearColor(0,0,0,0) cada frame en lugar
+   de dibujar un quad de fondo sólido.
    ═══════════════════════════════════════════════════════ */
 
-/* ── Strip vertex shader ── */
 const SRC_STRIP_VERT = `#version 300 es
 precision highp float;
 in float a_s, a_e, a_p, a_c, a_v;
 uniform float u_t;
-uniform float u_ah;   // segundos visibles hacia la derecha del playhead (futuro)
-uniform float u_bh;   // segundos visibles hacia la izquierda del playhead (pasado)
+uniform float u_ah;
+uniform float u_bh;
 uniform vec3  u_chColors[16];
 out vec3  v_col;
 out float v_act;
-
 void main(){
   float winLen   = u_ah + u_bh;
   float winStart = u_t - u_bh;
-
-  // NDC X: playhead en PLAYHEAD_FRAC => nota con startSec==u_t está exactamente ahí
-  float xStartNDC = ((a_s - winStart) / winLen) * 2.0 - 1.0;
-  float xEndNDC   = ((a_e - winStart) / winLen) * 2.0 - 1.0;
-
-  // Descartar notas completamente fuera de la ventana visible
-  if(xEndNDC < -1.0 || xStartNDC > 1.0){
-    gl_Position = vec4(10.0, 10.0, 0.0, 1.0);
-    v_col = vec3(0.0); v_act = 0.0;
-    return;
+  float xS = ((a_s - winStart) / winLen) * 2.0 - 1.0;
+  float xE = ((a_e - winStart) / winLen) * 2.0 - 1.0;
+  if(xE < -1.0 || xS > 1.0){
+    gl_Position = vec4(10.0,10.0,0.0,1.0);
+    v_col = vec3(0.0); v_act = 0.0; return;
   }
-
-  float xL = max(xStartNDC, -1.0);
-  float xR = min(xEndNDC,    1.0);
-
-  bool isRight = (gl_VertexID == 1 || gl_VertexID == 3);
-  bool isTop   = (gl_VertexID == 2 || gl_VertexID == 3);
-
-  float x  = isRight ? xR : xL;
-  float nh = 1.0 / 128.0;
-  float y  = isTop ? (a_p / 128.0 + nh) : (a_p / 128.0);
-  y = y * 2.0 - 1.0;
-
+  float xL = max(xS, -1.0);
+  float xR = min(xE,  1.0);
+  bool isR = (gl_VertexID==1||gl_VertexID==3);
+  bool isT = (gl_VertexID==2||gl_VertexID==3);
+  float x  = isR ? xR : xL;
+  float y  = (isT ? (a_p+1.0) : a_p) / 128.0 * 2.0 - 1.0;
   gl_Position = vec4(x, y, 0.0, 1.0);
-  v_col  = u_chColors[int(a_c) % 16];
+  v_col  = u_chColors[int(a_c) & 15];
   v_act  = (a_s <= u_t && a_e >= u_t) ? 1.0 : 0.0;
 }`;
 
 const SRC_STRIP_FRAG = `#version 300 es
 precision mediump float;
-in vec3  v_col;
-in float v_act;
-out vec4 o;
+in vec3 v_col; in float v_act; out vec4 o;
 void main(){
-  vec3 c = v_col;
-  if(v_act > 0.5) c = min(mix(c, vec3(1.0), 0.22) * 1.38, vec3(1.0));
+  vec3 c = v_act > 0.5 ? min(mix(v_col, vec3(1.0), 0.22)*1.38, vec3(1.0)) : v_col;
   o = vec4(c, 1.0);
 }`;
 
-/* ── Quad vert (para blit de fondo) ── */
-const SRC_QUAD_VERT = `#version 300 es
-precision highp float;
-const vec2 P[4]=vec2[](vec2(-1,-1),vec2(1,-1),vec2(-1,1),vec2(1,1));
-out vec2 v_uv;
-void main(){ gl_Position=vec4(P[gl_VertexID],0,1); v_uv=vec2(P[gl_VertexID]*.5+.5); }`;
-
-const SRC_BG_FRAG = `#version 300 es
-precision mediump float;
-in vec2 v_uv;
-out vec4 o;
-void main(){ o = vec4(0.012, 0.007, 0.026, 1.0); }`;
-
-/* ── GL context ── */
+/* ── GL context — alpha:true para ver el neural canvas ── */
 const rollCanvas = document.getElementById('rollCanvas');
 const gl = rollCanvas.getContext('webgl2',{
-  alpha: true, antialias: false,
+  alpha: true,
+  premultipliedAlpha: false,
+  antialias: false,
   powerPreference: 'high-performance',
-  preserveDrawingBuffer: false
+  preserveDrawingBuffer: false,
+  desynchronized: true
 });
 const wglOk = !!gl;
 
-let glProgStrip, glProgBg;
+let glProgStrip;
 let uStrip_t, uStrip_ah, uStrip_bh, uStrip_chColors;
 let stripVAO, stripIVBO, totalVboNotes = 0;
 let _vboCap = 4000000;
 let _fboInvalid = true;
 
-function _csh(src, type){
-  const s = gl.createShader(type);
-  gl.shaderSource(s, src); gl.compileShader(s);
-  if(!gl.getShaderParameter(s, gl.COMPILE_STATUS))
-    console.error('Shader:', gl.getShaderInfoLog(s));
+/* Colores cacheados — se reconstruyen solo cuando cambian */
+const _glColorFlat = new Float32Array(48);
+let _glColorDirty = true;
+function _rebuildGLColorFlat(){
+  for(let i=0;i<16;i++){
+    const[r,g,b]=hexToRgb01(CH_CSS[i]);
+    _glColorFlat[i*3]=r;_glColorFlat[i*3+1]=g;_glColorFlat[i*3+2]=b;
+  }
+  _glColorDirty=false;
+}
+
+function _csh(src,type){
+  const s=gl.createShader(type);
+  gl.shaderSource(s,src);gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))console.error(gl.getShaderInfoLog(s));
   return s;
 }
-function _linkProg(vSrc, fSrc){
-  const p = gl.createProgram();
-  gl.attachShader(p, _csh(vSrc, gl.VERTEX_SHADER));
-  gl.attachShader(p, _csh(fSrc, gl.FRAGMENT_SHADER));
+function _linkProg(vSrc,fSrc){
+  const p=gl.createProgram();
+  gl.attachShader(p,_csh(vSrc,gl.VERTEX_SHADER));
+  gl.attachShader(p,_csh(fSrc,gl.FRAGMENT_SHADER));
   gl.linkProgram(p);
-  if(!gl.getProgramParameter(p, gl.LINK_STATUS))
-    console.error('Link:', gl.getProgramInfoLog(p));
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS))console.error(gl.getProgramInfoLog(p));
   return p;
 }
 
-/* Stub para compatibilidad con código que llama _ensureFBOs */
-function _ensureFBOs(w, h){ /* no-op en direct draw */ }
+function _ensureFBOs(){/* no-op — direct draw */}
 
 if(wglOk){
   glProgStrip = _linkProg(SRC_STRIP_VERT, SRC_STRIP_FRAG);
-  glProgBg    = _linkProg(SRC_QUAD_VERT,  SRC_BG_FRAG);
 
-  uStrip_t        = gl.getUniformLocation(glProgStrip, 'u_t');
-  uStrip_ah       = gl.getUniformLocation(glProgStrip, 'u_ah');
-  uStrip_bh       = gl.getUniformLocation(glProgStrip, 'u_bh');
-  uStrip_chColors = gl.getUniformLocation(glProgStrip, 'u_chColors');
+  uStrip_t        = gl.getUniformLocation(glProgStrip,'u_t');
+  uStrip_ah       = gl.getUniformLocation(glProgStrip,'u_ah');
+  uStrip_bh       = gl.getUniformLocation(glProgStrip,'u_bh');
+  uStrip_chColors = gl.getUniformLocation(glProgStrip,'u_chColors');
 
-  /* VAO + VBO instanced — interleaved: s, e, p, c, v (5 floats/nota) */
   stripVAO = gl.createVertexArray();
   gl.bindVertexArray(stripVAO);
   stripIVBO = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, stripIVBO);
-  gl.bufferData(gl.ARRAY_BUFFER, _vboCap * 5 * 4, gl.DYNAMIC_DRAW);
-  const stride = 5 * 4;
-  ['a_s','a_e','a_p','a_c','a_v'].forEach((name, i) => {
-    const loc = gl.getAttribLocation(glProgStrip, name);
-    if(loc < 0) return;
+  gl.bufferData(gl.ARRAY_BUFFER, _vboCap*5*4, gl.DYNAMIC_DRAW);
+  const stride = 5*4;
+  ['a_s','a_e','a_p','a_c','a_v'].forEach((nm,i)=>{
+    const loc=gl.getAttribLocation(glProgStrip,nm); if(loc<0)return;
     gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, 1, gl.FLOAT, false, stride, i * 4);
-    gl.vertexAttribDivisor(loc, 1);
+    gl.vertexAttribPointer(loc,1,gl.FLOAT,false,stride,i*4);
+    gl.vertexAttribDivisor(loc,1);
   });
   gl.bindVertexArray(null);
+
+  /* Configuración de blend para transparencia correcta con premultipliedAlpha:false */
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 }
 
-/* ── Cache window ── */
-let _cacheStart = 0, _cacheEnd = 0;
+let _cacheStart=0, _cacheEnd=0;
 
 function _uploadCacheWindow(t){
-  if(!wglOk || !noteData || noteCount === 0) return;
-  const winStart = Math.max(0, t - POST_BUFFER - 1.0);
-  const winEnd   = Math.min(fileDuration, t + PRE_BUFFER + 1.0);
-  _cacheStart = winStart; _cacheEnd = winEnd;
-  const lo = lowerBound(startArr, winStart);
-  const hi = upperBound(startArr, winEnd);
-  const count = hi - lo;
-  if(count <= 0){ totalVboNotes = 0; return; }
-  if(count > _vboCap){
-    _vboCap = count + 65536;
-    gl.bindBuffer(gl.ARRAY_BUFFER, stripIVBO);
-    gl.bufferData(gl.ARRAY_BUFFER, _vboCap * 5 * 4, gl.DYNAMIC_DRAW);
+  if(!wglOk||!noteData||noteCount===0)return;
+  const ws=Math.max(0,t-POST_BUFFER-1.0);
+  const we=Math.min(fileDuration,t+PRE_BUFFER+1.0);
+  _cacheStart=ws; _cacheEnd=we;
+  const lo=lowerBound(startArr,ws), hi=upperBound(startArr,we);
+  const count=hi-lo;
+  if(count<=0){totalVboNotes=0;return;}
+  if(count>_vboCap){
+    _vboCap=count+65536;
+    gl.bindBuffer(gl.ARRAY_BUFFER,stripIVBO);
+    gl.bufferData(gl.ARRAY_BUFFER,_vboCap*5*4,gl.DYNAMIC_DRAW);
     _rebindVAO();
   }
-  gl.bindBuffer(gl.ARRAY_BUFFER, stripIVBO);
-  gl.bufferSubData(gl.ARRAY_BUFFER, 0, noteData.subarray(lo * 5, hi * 5));
-  totalVboNotes = count;
+  gl.bindBuffer(gl.ARRAY_BUFFER,stripIVBO);
+  gl.bufferSubData(gl.ARRAY_BUFFER,0,noteData.subarray(lo*5,hi*5));
+  totalVboNotes=count;
 }
 
 function _tickCacheRefill(t){
-  if(!wglOk || !noteData) return;
-  const remaining = _cacheEnd - t;
-  if(remaining < PRE_BUFFER * 0.25 || t < _cacheStart + 0.5)
-    _uploadCacheWindow(t);
+  if(!wglOk||!noteData)return;
+  if(_cacheEnd-t < PRE_BUFFER*0.25 || t < _cacheStart+0.5) _uploadCacheWindow(t);
 }
 
 function _rebindVAO(){
   gl.bindVertexArray(stripVAO);
-  const stride = 5 * 4;
-  ['a_s','a_e','a_p','a_c','a_v'].forEach((name, i) => {
-    const loc = gl.getAttribLocation(glProgStrip, name);
-    if(loc < 0) return;
+  const stride=5*4;
+  ['a_s','a_e','a_p','a_c','a_v'].forEach((nm,i)=>{
+    const loc=gl.getAttribLocation(glProgStrip,nm); if(loc<0)return;
     gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, 1, gl.FLOAT, false, stride, i * 4);
-    gl.vertexAttribDivisor(loc, 1);
+    gl.vertexAttribPointer(loc,1,gl.FLOAT,false,stride,i*4);
+    gl.vertexAttribDivisor(loc,1);
   });
   gl.bindVertexArray(null);
 }
 
 function updateGLColors(){
-  if(!wglOk) return;
-  const flat = new Float32Array(48);
-  for(let i = 0; i < 16; i++){
-    const [r,g,b] = hexToRgb01(CH_CSS[i]);
-    flat[i*3] = r; flat[i*3+1] = g; flat[i*3+2] = b;
-  }
-  gl.useProgram(glProgStrip);
-  gl.uniform3fv(uStrip_chColors, flat);
+  _glColorDirty=true;
 }
 
-/* ══════════════════════════════════════════════════════
-   RENDER FRAME — Direct draw, zero ping-pong blur
-   Paso 1: fondo sólido
-   Paso 2: dibujar todas las notas visibles
-   Paso 3: playhead con scissor
-   ══════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════
+   RENDER FRAME — transparent background + optimized
+   1. gl.clear con alpha=0 → deja ver el neural canvas
+   2. Dibujar notas (opacas, sin blend cost real)
+   3. Playhead con scissor
+   ══════════════════════════════════════════════════ */
 let _lastRenderT = -9999;
 
 function renderFrame(t){
-  if(!wglOk) return;
-  const w = rollCanvas.width, h = rollCanvas.height;
-  if(w < 4 || h < 4) return;
+  if(!wglOk)return;
+  const w=rollCanvas.width, h=rollCanvas.height;
+  if(w<4||h<4)return;
 
-  gl.viewport(0, 0, w, h);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0,0,w,h);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
 
-  /* ── Paso 1: Fondo ── */
-  gl.disable(gl.BLEND);
-  gl.useProgram(glProgBg);
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  /* Limpiar a transparente — el neural canvas se ve a través */
+  gl.clearColor(0.0, 0.0, 0.0, 0.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
 
-  /* ── Paso 2: Notas ── */
-  if(totalVboNotes > 0){
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  /* Notas — opacas (alpha=1 en el frag shader) */
+  if(totalVboNotes>0){
     gl.useProgram(glProgStrip);
 
-    const flat = new Float32Array(48);
-    for(let i = 0; i < 16; i++){
-      const [r,g,b] = hexToRgb01(CH_CSS[i]);
-      flat[i*3]=r; flat[i*3+1]=g; flat[i*3+2]=b;
+    /* Subir colores solo si cambiaron */
+    if(_glColorDirty){
+      _rebuildGLColorFlat();
+      gl.uniform3fv(uStrip_chColors, _glColorFlat);
     }
-    gl.uniform3fv(uStrip_chColors, flat);
 
-    /* u_ah: segundos visibles a la DERECHA del playhead (futuro)
-       u_bh: segundos visibles a la IZQUIERDA del playhead (pasado)
-       El shader coloca startSec == t exactamente en NDC X = PLAYHEAD_FRAC*2-1 */
     gl.uniform1f(uStrip_t,  t);
-    gl.uniform1f(uStrip_ah, NOTE_SPEED * (1.0 - PLAYHEAD_FRAC));
-    gl.uniform1f(uStrip_bh, NOTE_SPEED * PLAYHEAD_FRAC + POST_BUFFER);
+    gl.uniform1f(uStrip_ah, NOTE_SPEED*(1.0-PLAYHEAD_FRAC));
+    gl.uniform1f(uStrip_bh, NOTE_SPEED*PLAYHEAD_FRAC+POST_BUFFER);
 
     gl.bindVertexArray(stripVAO);
-    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, totalVboNotes);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,totalVboNotes);
     gl.bindVertexArray(null);
-    gl.disable(gl.BLEND);
   }
 
-  /* ── Paso 3: Playhead — línea vertical en PLAYHEAD_FRAC ── */
-  const px = Math.floor(PLAYHEAD_FRAC * w);
+  /* Playhead — línea vertical semitransparente en PLAYHEAD_FRAC */
+  const px=Math.floor(PLAYHEAD_FRAC*w);
+  gl.disable(gl.BLEND);
   gl.enable(gl.SCISSOR_TEST);
-  gl.scissor(px - 1, 0, 3, h);
-  gl.clearColor(0.63, 0.54, 0.98, 0.92);
+  gl.scissor(px-1,0,3,h);
+  gl.clearColor(0.63,0.54,0.98,0.92);
   gl.clear(gl.COLOR_BUFFER_BIT);
   gl.disable(gl.SCISSOR_TEST);
-  gl.clearColor(0, 0, 0, 0);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-  _lastRenderT = t;
-  _fboInvalid = false;
+  _lastRenderT=t;
+  _fboInvalid=false;
 }
 
-/* ── Resize ── */
 function resizeRoll(){
-  const r = document.getElementById('rollWrap').getBoundingClientRect();
-  const newW = Math.floor(r.width);
-  const newH = Math.floor(r.height || 240);
-  if(rollCanvas.width === newW && rollCanvas.height === newH) return;
-  rollCanvas.width  = newW;
-  rollCanvas.height = newH;
-  _fboInvalid = true;
+  const r=document.getElementById('rollWrap').getBoundingClientRect();
+  const nw=Math.floor(r.width), nh=Math.floor(r.height||240);
+  if(rollCanvas.width===nw&&rollCanvas.height===nh)return;
+  rollCanvas.width=nw; rollCanvas.height=nh;
+  _fboInvalid=true;
 }
-addEventListener('resize', () => { resizeRoll(); drawKeys(); });
+addEventListener('resize',()=>{resizeRoll();drawKeys();});
 
-document.getElementById('volSlider').addEventListener('input', e => {
-  const v = Math.round(parseInt(e.target.value) * 1.27);
-  if(midiEnabled && midiOutput)
-    for(let ch = 0; ch < 16; ch++) try{ midiOutput.send([0xB0|ch, 7, v]) }catch(_){}
+document.getElementById('volSlider').addEventListener('input',e=>{
+  const v=Math.round(parseInt(e.target.value)*1.27);
+  if(midiEnabled&&midiOutput)
+    for(let ch=0;ch<16;ch++)try{midiOutput.send([0xB0|ch,7,v])}catch(_){}
 });
 
 /* ═══ KEYBOARD CANVAS ═══ */
-const keysCanvas = document.getElementById('keysCanvas');
-const kctx = keysCanvas.getContext('2d', {alpha: false});
-const isBlack = n => [1,3,6,8,10].includes(n%12);
-let whiteCount = 0;
-const wIdx = new Int16Array(128), wOf = new Int16Array(128);
+const keysCanvas=document.getElementById('keysCanvas');
+const kctx=keysCanvas.getContext('2d',{alpha:false});
+const isBlack=n=>[1,3,6,8,10].includes(n%12);
+let whiteCount=0;
+const wIdx=new Int16Array(128),wOf=new Int16Array(128);
 {let wi=0;for(let n=0;n<128;n++){if(!isBlack(n)){wIdx[n]=wi;wi++}else{wIdx[n]=-1;wOf[n]=wi-1}}whiteCount=wi;}
-const keyColors = new Array(128).fill(null);
-let _keysDirty = true;
-function markKeysDirty(){ _keysDirty = true; }
+const keyColors=new Array(128).fill(null);
+let _keysDirty=true;
+function markKeysDirty(){_keysDirty=true;}
 
+/* Cache de color dominante — máx 15fps */
+let _domColorCache=null,_domColorTs=-9999;
 function _getScreenDominantColor(t){
-  if(!noteData) return null;
-  const lo = lowerBound(startArr, t - 0.05);
-  const hi = Math.min(noteCount, upperBound(startArr, t + 0.15));
-  if(lo >= hi) return null;
-  const freq = new Int32Array(16);
-  for(let i = lo; i < hi; i++){ if(endArr[i] >= t) freq[noteData[i*5+3]&15]++; }
-  let bestCh = 0, bestN = 0;
-  for(let c = 0; c < 16; c++){ if(freq[c] > bestN){ bestN = freq[c]; bestCh = c; } }
-  return bestN > 0 ? {hue: hexToHue(CH_CSS[bestCh]), color: CH_CSS[bestCh]} : null;
+  if(!noteData)return null;
+  const now=performance.now();
+  if(now-_domColorTs<66)return _domColorCache;
+  _domColorTs=now;
+  const lo=lowerBound(startArr,t-0.05);
+  const hi=Math.min(noteCount,upperBound(startArr,t+0.15));
+  if(lo>=hi){_domColorCache=null;return null;}
+  const freq=new Int32Array(16);
+  for(let i=lo;i<hi;i++){if(endArr[i]>=t)freq[noteData[i*5+3]&15]++;}
+  let bestCh=0,bestN=0;
+  for(let c=0;c<16;c++){if(freq[c]>bestN){bestN=freq[c];bestCh=c;}}
+  _domColorCache=bestN>0?{hue:hexToHue(CH_CSS[bestCh]),color:CH_CSS[bestCh]}:null;
+  return _domColorCache;
 }
 
 function drawKeys(){
-  _keysDirty = false;
-  const W = keysCanvas.width, H = keysCanvas.height;
-  if(W < 4 || H < 4) return;
-  const kw = W/whiteCount, bw = kw*.6, bh = H*.63;
-  const rad = Math.min(3, kw*.22);
-  const domCol = _getScreenDominantColor(currentTime || 0);
-  const hue = domCol ? domCol.hue : (window._neuralHue || 230);
-  if(domCol) window._neuralHueTarget = domCol.hue;
-  kctx.fillStyle = `hsl(${hue},38%,5%)`; kctx.fillRect(0,0,W,H);
-  for(let n = 0; n < 128; n++){
-    if(isBlack(n)) continue;
-    const wi = wIdx[n], x = wi*kw;
-    const col = keyColors[n];
+  if(!_keysDirty)return;
+  _keysDirty=false;
+  const W=keysCanvas.width,H=keysCanvas.height;
+  if(W<4||H<4)return;
+  const kw=W/whiteCount,bw=kw*.6,bh=H*.63;
+  const rad=Math.min(3,kw*.22);
+  const domCol=_getScreenDominantColor(currentTime||0);
+  const hue=domCol?domCol.hue:(window._neuralHue||230);
+  if(domCol)window._neuralHueTarget=domCol.hue;
+  kctx.fillStyle=`hsl(${hue},38%,5%)`;kctx.fillRect(0,0,W,H);
+  for(let n=0;n<128;n++){
+    if(isBlack(n))continue;
+    const wi=wIdx[n],x=wi*kw;
+    const col=keyColors[n];
     if(col){
-      const gr = kctx.createLinearGradient(x,0,x,H);
-      gr.addColorStop(0,col); gr.addColorStop(.55,col+'cc'); gr.addColorStop(1,col+'55');
-      kctx.fillStyle = gr; kctx.shadowColor = col; kctx.shadowBlur = 14;
+      const gr=kctx.createLinearGradient(x,0,x,H);
+      gr.addColorStop(0,col);gr.addColorStop(.55,col+'cc');gr.addColorStop(1,col+'55');
+      kctx.fillStyle=gr;kctx.shadowColor=col;kctx.shadowBlur=14;
     }else{
-      const gr = kctx.createLinearGradient(x,0,x,H);
-      gr.addColorStop(0,`hsl(${hue},32%,16%)`); gr.addColorStop(.4,`hsl(${hue},28%,11%)`); gr.addColorStop(1,`hsl(${hue},25%,7%)`);
-      kctx.fillStyle = gr; kctx.shadowBlur = 0;
+      const gr=kctx.createLinearGradient(x,0,x,H);
+      gr.addColorStop(0,`hsl(${hue},32%,16%)`);gr.addColorStop(.4,`hsl(${hue},28%,11%)`);gr.addColorStop(1,`hsl(${hue},25%,7%)`);
+      kctx.fillStyle=gr;kctx.shadowBlur=0;
     }
     kctx.beginPath();
-    kctx.moveTo(x+1,0); kctx.lineTo(x+kw-1,0); kctx.lineTo(x+kw-1,H-rad);
+    kctx.moveTo(x+1,0);kctx.lineTo(x+kw-1,0);kctx.lineTo(x+kw-1,H-rad);
     kctx.quadraticCurveTo(x+kw-1,H,x+kw-1-rad,H);
-    kctx.lineTo(x+1+rad,H); kctx.quadraticCurveTo(x+1,H,x+1,H-rad); kctx.closePath();
-    kctx.fill(); kctx.shadowBlur = 0;
-    kctx.strokeStyle = col ? col+'44' : 'rgba(120,80,200,.12)'; kctx.lineWidth = .6; kctx.stroke();
-    if(n%12===0 && kw>6){
-      kctx.fillStyle = col ? 'rgba(255,255,255,.72)' : 'rgba(160,140,255,.22)';
-      kctx.font = `${Math.max(6,Math.min(kw*.44,10))}px Inter,sans-serif`; kctx.textAlign = 'center';
-      kctx.fillText('C'+(Math.floor(n/12)-1), x+kw/2, H-3);
+    kctx.lineTo(x+1+rad,H);kctx.quadraticCurveTo(x+1,H,x+1,H-rad);kctx.closePath();
+    kctx.fill();kctx.shadowBlur=0;
+    kctx.strokeStyle=col?col+'44':'rgba(120,80,200,.12)';kctx.lineWidth=.6;kctx.stroke();
+    if(n%12===0&&kw>6){
+      kctx.fillStyle=col?'rgba(255,255,255,.72)':'rgba(160,140,255,.22)';
+      kctx.font=`${Math.max(6,Math.min(kw*.44,10))}px Inter,sans-serif`;kctx.textAlign='center';
+      kctx.fillText('C'+(Math.floor(n/12)-1),x+kw/2,H-3);
     }
   }
-  for(let n = 0; n < 128; n++){
-    if(!isBlack(n)) continue;
-    const x = wOf[n]*kw + kw*.68, col = keyColors[n];
+  for(let n=0;n<128;n++){
+    if(!isBlack(n))continue;
+    const x=wOf[n]*kw+kw*.68,col=keyColors[n];
     if(col){
-      const gr = kctx.createLinearGradient(x,0,x,bh);
-      gr.addColorStop(0,col); gr.addColorStop(1,col+'77');
-      kctx.fillStyle = gr; kctx.shadowColor = col; kctx.shadowBlur = 10;
+      const gr=kctx.createLinearGradient(x,0,x,bh);
+      gr.addColorStop(0,col);gr.addColorStop(1,col+'77');
+      kctx.fillStyle=gr;kctx.shadowColor=col;kctx.shadowBlur=10;
     }else{
-      const gr = kctx.createLinearGradient(x,0,x+bw,0);
-      gr.addColorStop(0,`hsl(${hue},30%,10%)`); gr.addColorStop(.15,`hsl(${hue},25%,6%)`);
-      gr.addColorStop(.85,`hsl(${hue},25%,6%)`); gr.addColorStop(1,`hsl(${hue},20%,3%)`);
-      kctx.fillStyle = gr; kctx.shadowBlur = 0;
+      const gr=kctx.createLinearGradient(x,0,x+bw,0);
+      gr.addColorStop(0,`hsl(${hue},30%,10%)`);gr.addColorStop(.15,`hsl(${hue},25%,6%)`);
+      gr.addColorStop(.85,`hsl(${hue},25%,6%)`);gr.addColorStop(1,`hsl(${hue},20%,3%)`);
+      kctx.fillStyle=gr;kctx.shadowBlur=0;
     }
-    const r2 = Math.min(2, bw*.2);
+    const r2=Math.min(2,bw*.2);
     kctx.beginPath();
-    kctx.moveTo(x,0); kctx.lineTo(x+bw,0); kctx.lineTo(x+bw,bh-r2);
+    kctx.moveTo(x,0);kctx.lineTo(x+bw,0);kctx.lineTo(x+bw,bh-r2);
     kctx.quadraticCurveTo(x+bw,bh,x+bw-r2,bh);
-    kctx.lineTo(x+r2,bh); kctx.quadraticCurveTo(x,bh,x,bh-r2); kctx.closePath();
-    kctx.fill(); kctx.shadowBlur = 0;
-    if(!col){ kctx.fillStyle='rgba(255,255,255,.05)'; kctx.fillRect(x+1,2,bw*.35,bh*.6); }
+    kctx.lineTo(x+r2,bh);kctx.quadraticCurveTo(x,bh,x,bh-r2);kctx.closePath();
+    kctx.fill();kctx.shadowBlur=0;
+    if(!col){kctx.fillStyle='rgba(255,255,255,.05)';kctx.fillRect(x+1,2,bw*.35,bh*.6);}
   }
 }
 
 function resizeKeys(){
-  const r = document.getElementById('keysWrap').getBoundingClientRect();
-  const newW = Math.floor(r.width);
-  const newH = Math.floor(r.height || 100);
-  if(keysCanvas.width === newW && keysCanvas.height === newH) return;
-  keysCanvas.width  = newW;
-  keysCanvas.height = newH;
-  _keysDirty = true;
-  drawKeys();
+  const r=document.getElementById('keysWrap').getBoundingClientRect();
+  const nw=Math.floor(r.width),nh=Math.floor(r.height||100);
+  if(keysCanvas.width===nw&&keysCanvas.height===nh)return;
+  keysCanvas.width=nw;keysCanvas.height=nh;
+  _keysDirty=true;drawKeys();
 }
 </script>
 <script>
 'use strict';
 
 /* ═══ MIDI OUTPUT ═══ */
-let midiAccess=null, midiOutput=null, midiEnabled=true;
+let midiAccess=null,midiOutput=null,midiEnabled=true;
 const _midiQueue=[];
 let _midiFlushId=null;
 
-function _enqueueMidi(data, timestampMs){ _midiQueue.push({data, ts: timestampMs}); }
+function _enqueueMidi(data,ts){_midiQueue.push({data,ts});}
 function _flushMidiQueue(){
-  const now = performance.now();
-  let i = 0;
-  while(i < _midiQueue.length){
-    const ev = _midiQueue[i];
-    if(ev.ts <= now+2){ if(midiEnabled && midiOutput) try{ midiOutput.send(ev.data, ev.ts) }catch(_){} i++; }
+  const now=performance.now();
+  let i=0;
+  while(i<_midiQueue.length){
+    const ev=_midiQueue[i];
+    if(ev.ts<=now+2){if(midiEnabled&&midiOutput)try{midiOutput.send(ev.data,ev.ts)}catch(_){} i++;}
     else break;
   }
-  if(i > 0) _midiQueue.splice(0, i);
+  if(i>0)_midiQueue.splice(0,i);
 }
-function _startMidiFlushLoop(){ if(_midiFlushId) return; _midiFlushId = setInterval(_flushMidiQueue, 1); }
-function _stopMidiFlushLoop(){ if(_midiFlushId){ clearInterval(_midiFlushId); _midiFlushId=null; } _midiQueue.length=0; }
+function _startMidiFlushLoop(){if(_midiFlushId)return;_midiFlushId=setInterval(_flushMidiQueue,1);}
+function _stopMidiFlushLoop(){if(_midiFlushId){clearInterval(_midiFlushId);_midiFlushId=null;}_midiQueue.length=0;}
 
-document.getElementById('tabWmidi').addEventListener('click', () => { midiEnabled=true;  _setMidiTab('tabWmidi',  'panelWmidi'); });
-document.getElementById('tabMidiIn').addEventListener('click',() => { midiEnabled=true;  _setMidiTab('tabMidiIn', 'panelMidiIn'); });
-document.getElementById('tabNone').addEventListener('click',  () => { midiEnabled=false; _midiAllOff(); _setMidiTab('tabNone', 'panelNone'); });
-function _setMidiTab(tab, panel){
-  ['tabWmidi','tabMidiIn','tabNone'].forEach(id => document.getElementById(id).classList.remove('active'));
-  ['panelWmidi','panelMidiIn','panelNone'].forEach(id => document.getElementById(id).classList.remove('on'));
+document.getElementById('tabWmidi').addEventListener('click',()=>{midiEnabled=true;_setMidiTab('tabWmidi','panelWmidi');});
+document.getElementById('tabMidiIn').addEventListener('click',()=>{midiEnabled=true;_setMidiTab('tabMidiIn','panelMidiIn');});
+document.getElementById('tabNone').addEventListener('click',()=>{midiEnabled=false;_midiAllOff();_setMidiTab('tabNone','panelNone');});
+function _setMidiTab(tab,panel){
+  ['tabWmidi','tabMidiIn','tabNone'].forEach(id=>document.getElementById(id).classList.remove('active'));
+  ['panelWmidi','panelMidiIn','panelNone'].forEach(id=>document.getElementById(id).classList.remove('on'));
   document.getElementById(tab).classList.add('active');
   document.getElementById(panel).classList.add('on');
 }
 
-function wmidiSetStatus(t, txt){ const el=document.getElementById('wmidiStatus'); el.className='midi-status '+t; el.textContent=txt; }
+function wmidiSetStatus(t,txt){const el=document.getElementById('wmidiStatus');el.className='midi-status '+t;el.textContent=txt;}
 function wmidiRefresh(){
-  if(!midiAccess) return;
-  const sel=document.getElementById('wmidiOutputSel'), prev=sel.value;
+  if(!midiAccess)return;
+  const sel=document.getElementById('wmidiOutputSel'),prev=sel.value;
   sel.innerHTML='<option value="">— select output —</option>';
-  midiAccess.outputs.forEach((p,id) => { const o=document.createElement('option'); o.value=id; o.textContent=p.name; sel.appendChild(o); });
-  if(prev) sel.value=prev;
-  if(sel.value) midiOutput=midiAccess.outputs.get(sel.value)||null;
+  midiAccess.outputs.forEach((p,id)=>{const o=document.createElement('option');o.value=id;o.textContent=p.name;sel.appendChild(o);});
+  if(prev)sel.value=prev;
+  if(sel.value)midiOutput=midiAccess.outputs.get(sel.value)||null;
 }
-document.getElementById('btnWmidiRequest').addEventListener('click', async () => {
+document.getElementById('btnWmidiRequest').addEventListener('click',async()=>{
   try{
-    midiAccess = await navigator.requestMIDIAccess({sysex: false});
-    wmidiSetStatus('ok','Access granted'); wmidiRefresh(); midiAccess.onstatechange=wmidiRefresh;
+    midiAccess=await navigator.requestMIDIAccess({sysex:false});
+    wmidiSetStatus('ok','Access granted');wmidiRefresh();midiAccess.onstatechange=wmidiRefresh;
     _startMidiFlushLoop();
-  }catch(err){ wmidiSetStatus('err','Denied: '+err.message); }
+  }catch(err){wmidiSetStatus('err','Denied: '+err.message);}
 });
-document.getElementById('wmidiOutputSel').addEventListener('change', e => {
-  if(midiOutput) for(let ch=0;ch<16;ch++) try{ midiOutput.send([0xB0|ch,123,0]) }catch(_){}
-  midiOutput = midiAccess && e.target.value ? midiAccess.outputs.get(e.target.value)||null : null;
-  wmidiSetStatus(midiOutput?'ok':'idle', midiOutput?'→ '+midiOutput.name:'No output');
+document.getElementById('wmidiOutputSel').addEventListener('change',e=>{
+  if(midiOutput)for(let ch=0;ch<16;ch++)try{midiOutput.send([0xB0|ch,123,0])}catch(_){}
+  midiOutput=midiAccess&&e.target.value?midiAccess.outputs.get(e.target.value)||null:null;
+  wmidiSetStatus(midiOutput?'ok':'idle',midiOutput?'→ '+midiOutput.name:'No output');
 });
-document.getElementById('btnWmidiRefresh').addEventListener('click', wmidiRefresh);
-document.getElementById('btnWmidiAllOff').addEventListener('click', () => { _midiAllOff(); soundingNotes.clear(); keyColors.fill(null); markKeysDirty(); });
+document.getElementById('btnWmidiRefresh').addEventListener('click',wmidiRefresh);
+document.getElementById('btnWmidiAllOff').addEventListener('click',()=>{_midiAllOff();soundingNotes.clear();keyColors.fill(null);markKeysDirty();});
 
 function _midiAllOff(){
   _midiQueue.length=0;
-  if(midiOutput) for(let ch=0;ch<16;ch++){
-    try{ midiOutput.send([0xB0|ch,123,0]) }catch(_){}
-    try{ midiOutput.send([0xB0|ch,121,0]) }catch(_){}
+  if(midiOutput)for(let ch=0;ch<16;ch++){
+    try{midiOutput.send([0xB0|ch,123,0])}catch(_){}
+    try{midiOutput.send([0xB0|ch,121,0])}catch(_){}
   }
 }
-function midiNoteOn(ch,n,v){ if(!midiEnabled||!midiOutput) return; _enqueueMidi([0x90|ch,n,Math.max(32,Math.min(127,v))], performance.now()); }
-function midiNoteOff(ch,n){ if(!midiEnabled||!midiOutput) return; _enqueueMidi([0x80|ch,n,0], performance.now()); }
-function playNoteOn(ch,note,vel){ keyColors[note]=CH_CSS[ch%16]; markKeysDirty(); midiNoteOn(ch,note,vel); }
-function playNoteOff(ch,note){ keyColors[note]=null; markKeysDirty(); midiNoteOff(ch,note); }
 
 /* ═══ NOTE DATA ═══ */
-let noteData=null, noteCount=0, startArr=null, endArr=null;
-let midiMeta=null, fileDuration=0, rawBufs=[], rawTotal=0;
-let _peakNps=0, _peakNpsSec=0, _peakPoly=0, _peakPolySec=0;
+let noteData=null,noteCount=0,startArr=null,endArr=null;
+let midiMeta=null,fileDuration=0,rawBufs=[],rawTotal=0;
+let _peakNps=0,_peakNpsSec=0,_peakPoly=0,_peakPolySec=0;
 let _fileCCTimes=[];
 
-function lowerBound(arr,v){ let lo=0,hi=arr.length; while(lo<hi){const m=(lo+hi)>>1; if(arr[m]<v)lo=m+1; else hi=m;} return lo; }
-function upperBound(arr,v){ let lo=0,hi=arr.length; while(lo<hi){const m=(lo+hi)>>1; if(arr[m]<=v)lo=m+1; else hi=m;} return lo; }
+function lowerBound(arr,v){let lo=0,hi=arr.length;while(lo<hi){const m=(lo+hi)>>1;if(arr[m]<v)lo=m+1;else hi=m;}return lo;}
+function upperBound(arr,v){let lo=0,hi=arr.length;while(lo<hi){const m=(lo+hi)>>1;if(arr[m]<=v)lo=m+1;else hi=m;}return lo;}
 
 function buildSortedArrays(){
-  noteData = new Float32Array(rawTotal * 5);
+  noteData=new Float32Array(rawTotal*5);
   let off=0;
-  for(const b of rawBufs){ noteData.set(new Float32Array(b.buf), off*5); off+=b.count; b.buf=null; }
-  rawBufs=null; rawTotal=0;
-  noteCount = noteData.length / 5;
-  const idx = new Uint32Array(noteCount);
-  for(let i=0;i<noteCount;i++) idx[i]=i;
-  if(noteCount > 200000){
-    let maxSec=0; for(let i=0;i<noteCount;i++){const s=noteData[i*5]; if(s>maxSec)maxSec=s;}
-    const B = Math.min(Math.ceil(maxSec)+1, 65536);
+  for(const b of rawBufs){noteData.set(new Float32Array(b.buf),off*5);off+=b.count;b.buf=null;}
+  rawBufs=null;rawTotal=0;
+  noteCount=noteData.length/5;
+  const idx=new Uint32Array(noteCount);
+  for(let i=0;i<noteCount;i++)idx[i]=i;
+  if(noteCount>200000){
+    let maxSec=0;for(let i=0;i<noteCount;i++){const s=noteData[i*5];if(s>maxSec)maxSec=s;}
+    const B=Math.min(Math.ceil(maxSec)+1,65536);
     const cnt=new Int32Array(B);
-    for(let i=0;i<noteCount;i++) cnt[Math.min(noteData[i*5]|0, B-1)]++;
-    const st=new Int32Array(B); let acc=0;
-    for(let b=0;b<B;b++){st[b]=acc; acc+=cnt[b];}
-    const tmp=new Uint32Array(noteCount), pos=st.slice();
-    for(let i=0;i<noteCount;i++) tmp[pos[Math.min(noteData[i*5]|0, B-1)]++]=i;
-    for(let b=0;b<B;b++){const s=st[b],e=(b+1<B?st[b+1]:noteCount); if(e-s>1) tmp.subarray(s,e).sort((a,v)=>noteData[a*5]-noteData[v*5]);}
+    for(let i=0;i<noteCount;i++)cnt[Math.min(noteData[i*5]|0,B-1)]++;
+    const st=new Int32Array(B);let acc=0;
+    for(let b=0;b<B;b++){st[b]=acc;acc+=cnt[b];}
+    const tmp=new Uint32Array(noteCount),pos=st.slice();
+    for(let i=0;i<noteCount;i++)tmp[pos[Math.min(noteData[i*5]|0,B-1)]++]=i;
+    for(let b=0;b<B;b++){const s=st[b],e=(b+1<B?st[b+1]:noteCount);if(e-s>1)tmp.subarray(s,e).sort((a,v)=>noteData[a*5]-noteData[v*5]);}
     idx.set(tmp);
-  } else {
-    idx.sort((a,b) => noteData[a*5]-noteData[b*5]);
+  }else{
+    idx.sort((a,b)=>noteData[a*5]-noteData[b*5]);
   }
   const sorted=new Float32Array(noteCount*5);
-  startArr=new Float32Array(noteCount); endArr=new Float32Array(noteCount);
+  startArr=new Float32Array(noteCount);endArr=new Float32Array(noteCount);
   for(let i=0;i<noteCount;i++){
     const si=idx[i];
-    sorted[i*5]=noteData[si*5]; sorted[i*5+1]=noteData[si*5+1];
-    sorted[i*5+2]=noteData[si*5+2]; sorted[i*5+3]=noteData[si*5+3]; sorted[i*5+4]=noteData[si*5+4];
-    startArr[i]=noteData[si*5]; endArr[i]=noteData[si*5+1];
+    sorted[i*5]=noteData[si*5];sorted[i*5+1]=noteData[si*5+1];
+    sorted[i*5+2]=noteData[si*5+2];sorted[i*5+3]=noteData[si*5+3];sorted[i*5+4]=noteData[si*5+4];
+    startArr[i]=noteData[si*5];endArr[i]=noteData[si*5+1];
   }
   noteData=sorted;
-  fileDuration=0; for(let i=0;i<noteCount;i++) if(endArr[i]>fileDuration) fileDuration=endArr[i];
+  fileDuration=0;for(let i=0;i<noteCount;i++)if(endArr[i]>fileDuration)fileDuration=endArr[i];
 }
 
 function computePeaks(){
-  if(!noteData||noteCount===0) return;
-  let pNps=0, pNpsSec=0;
+  if(!noteData||noteCount===0)return;
+  let pNps=0,pNpsSec=0;
   const step=0.08;
   for(let t=0;t<=fileDuration;t+=step){
     const n=upperBound(startArr,t)-lowerBound(startArr,t-1.0);
-    if(n>pNps){pNps=n; pNpsSec=t;}
+    if(n>pNps){pNps=n;pNpsSec=t;}
   }
-  _peakNps=pNps; _peakNpsSec=pNpsSec;
-  const evts=new Float64Array(noteCount*2), dirs=new Int8Array(noteCount*2);
+  _peakNps=pNps;_peakNpsSec=pNpsSec;
+  const evts=new Float64Array(noteCount*2),dirs=new Int8Array(noteCount*2);
   for(let i=0;i<noteCount;i++){evts[i*2]=startArr[i];dirs[i*2]=1;evts[i*2+1]=endArr[i];dirs[i*2+1]=-1;}
-  const order=new Uint32Array(noteCount*2); for(let i=0;i<noteCount*2;i++) order[i]=i;
+  const order=new Uint32Array(noteCount*2);for(let i=0;i<noteCount*2;i++)order[i]=i;
   order.sort((a,b)=>evts[a]-evts[b]||dirs[a]-dirs[b]);
-  let cur=0, pPoly=0, pPolySec=0;
-  for(let i=0;i<order.length;i++){cur+=dirs[order[i]]; if(cur>pPoly){pPoly=cur; pPolySec=evts[order[i]];}}
-  _peakPoly=pPoly; _peakPolySec=pPolySec;
+  let cur=0,pPoly=0,pPolySec=0;
+  for(let i=0;i<order.length;i++){cur+=dirs[order[i]];if(cur>pPoly){pPoly=cur;pPolySec=evts[order[i]];}}
+  _peakPoly=pPoly;_peakPolySec=pPolySec;
   document.getElementById('sPeakNps').textContent=pNps.toLocaleString();
   document.getElementById('sPeakPoly').textContent=pPoly.toLocaleString();
 }
@@ -1126,15 +1082,15 @@ function computePeaks(){
 /* ═══ WORKER ═══ */
 let worker=null;
 function spawnWorker(){
-  if(worker) worker.terminate();
+  if(worker)worker.terminate();
   const blob=new Blob([document.getElementById('workerSrc').textContent.trim()],{type:'text/javascript'});
   worker=new Worker(URL.createObjectURL(blob));
   worker.onmessage=handleWorkerMsg;
-  worker.onerror=e=>{showToast('Parse error: '+e.message); hideParseBar();};
+  worker.onerror=e=>{showToast('Parse error: '+e.message);hideParseBar();};
 }
 function handleWorkerMsg(ev){
   const m=ev.data;
-  if(m.type==='error'){showToast('Error: '+m.msg); hideParseBar(); return;}
+  if(m.type==='error'){showToast('Error: '+m.msg);hideParseBar();return;}
   if(m.type==='progress'){
     document.getElementById('parseFill').style.width=(m.pct||0)+'%';
     document.getElementById('parsePhase').textContent=m.phase==='pass1'?'Pass 1: tempo map…':`Pass 2: track ${(m.track||0)+1} · ${(m.totalSoFar||0).toLocaleString()} notes`;
@@ -1142,31 +1098,31 @@ function handleWorkerMsg(ev){
     return;
   }
   if(m.type==='chunk'){
-    rawBufs.push({buf:m.buf, count:m.count}); rawTotal+=m.count;
+    rawBufs.push({buf:m.buf,count:m.count});rawTotal+=m.count;
     document.getElementById('fileNotes').textContent=rawTotal.toLocaleString()+' notes';
     if(m.final){
-      midiMeta={tempoMap:m.tempoMap, secToTempoMap:m.secToTempoMap, ppq:m.ppq, numTracks:m.numTracks, fmt:m.fmt, ccCount:m.ccCount||0};
+      midiMeta={tempoMap:m.tempoMap,secToTempoMap:m.secToTempoMap,ppq:m.ppq,numTracks:m.numTracks,fmt:m.fmt,ccCount:m.ccCount||0};
       _fileCCTimes=m.ccTimes||[];
       buildSortedArrays();
       _longestExitedNote=0;
       document.getElementById('postBufVal').textContent=POST_BUFFER.toFixed(1)+'s';
       _recalcPreBuffer();
-      if(wglOk){ _cacheStart=0; _cacheEnd=0; _uploadCacheWindow(0); _fboInvalid=true; }
+      if(wglOk){_cacheStart=0;_cacheEnd=0;_uploadCacheWindow(0);_fboInvalid=true;}
       const channels=new Set();
-      for(let i=0;i<noteCount;i++) channels.add(noteData[i*5+3]|0);
+      for(let i=0;i<noteCount;i++)channels.add(noteData[i*5+3]|0);
       finalizeMidi(channels);
     }
   }
 }
-function showParseBar(){ document.getElementById('parseBarWrap').classList.add('on'); document.getElementById('parseFill').style.width='0%'; }
-function hideParseBar(){ document.getElementById('parseBarWrap').classList.remove('on'); }
+function showParseBar(){document.getElementById('parseBarWrap').classList.add('on');document.getElementById('parseFill').style.width='0%';}
+function hideParseBar(){document.getElementById('parseBarWrap').classList.remove('on');}
 
 function finalizeMidi(channels){
   hideParseBar();
   document.getElementById('fileBar').classList.add('on');
   document.getElementById('rollOverlay').classList.add('hidden');
   document.getElementById('btnPlay').disabled=false;
-  const {tempoMap,secToTempoMap,ppq,numTracks,fmt,ccCount}=midiMeta;
+  const{tempoMap,secToTempoMap,ppq,numTracks,fmt,ccCount}=midiMeta;
   const baseBpm=Math.round(60e6/(tempoMap[0]?.uspb||500000));
   document.getElementById('sNotes').textContent=noteCount.toLocaleString();
   document.getElementById('sTracks').textContent=numTracks;
@@ -1182,112 +1138,127 @@ function finalizeMidi(channels){
   document.getElementById('tTotal').textContent=fmtT(fileDuration);
   document.getElementById('midiStatsSection').style.display='block';
   document.getElementById('limitsChartSection').style.display='block';
-  _achNpsFired=false; _achPolyFired=false;
+  _achNpsFired=false;_achPolyFired=false;
   document.getElementById('achieveContainer').innerHTML='';
-  if(window._midiInReset) window._midiInReset();
+  if(window._midiInReset)window._midiInReset();
   _rebuildChLegend(channels);
-  updateGLColors();
+  _glColorDirty=true;
+  _rebuildGLColorFlat();
+  if(wglOk){
+    gl.useProgram(glProgStrip);
+    gl.uniform3fv(uStrip_chColors,_glColorFlat);
+  }
   computePeaks();
   buildLimitsData();
-  resizeRoll(); resizeKeys();
+  resizeRoll();resizeKeys();
   _fboInvalid=true;
   startGLLoop();
   requestAnimationFrame(()=>requestAnimationFrame(()=>{
-    resizeRoll(); resizeKeys();
+    resizeRoll();resizeKeys();
     _uploadCacheWindow(0);
     renderFrame(0);
   }));
-  startScheduler();
   showToast('✓ Loaded '+noteCount.toLocaleString()+' notes');
   window._neuralHueTarget=270;
   const hint=document.getElementById('rollClickHint');
-  if(hint){ hint.style.opacity='1'; setTimeout(()=>{hint.style.opacity='0';},3500); }
+  if(hint){hint.style.opacity='1';setTimeout(()=>{hint.style.opacity='0';},3500);}
 }
 
 /* ═══ CH LEGEND ═══ */
 function _rebuildChLegend(channels){
-  const leg=document.getElementById('chLegend'); leg.innerHTML='';
-  if(!channels) return;
+  const leg=document.getElementById('chLegend');leg.innerHTML='';
+  if(!channels)return;
   [...channels].sort((a,b)=>a-b).forEach(ch=>{
     const col=CH_CSS[ch%16];
-    const chip=document.createElement('div'); chip.className='ch-chip';
+    const chip=document.createElement('div');chip.className='ch-chip';
     chip.dataset.ch=ch;
     chip.style.cssText=`background:${col}22;border-color:${col}55;color:${col};cursor:pointer`;
     chip.title='Click to change color for channel '+(ch+1);
     chip.innerHTML=`<span class="ch-dot" style="background:${col}"></span>Ch ${ch+1} <span style="font-size:.52rem;opacity:.5">🎨</span>`;
-    chip.addEventListener('click',()=>{ if(window._openChColorPicker) _openChColorPicker(ch,chip); });
+    chip.addEventListener('click',()=>{if(window._openChColorPicker)_openChColorPicker(ch,chip);});
     leg.appendChild(chip);
   });
 }
 
-/* ═══ MINI CHARTS ═══ */
+/* ═══ MINI CHARTS — throttled ~15fps ═══ */
 const _HIST_LEN=280;
-const _histNps=new Float32Array(_HIST_LEN), _histPoly=new Float32Array(_HIST_LEN);
-const _histBpm=new Float32Array(_HIST_LEN), _histCC=new Float32Array(_HIST_LEN);
+const _histNps=new Float32Array(_HIST_LEN),_histPoly=new Float32Array(_HIST_LEN);
+const _histBpm=new Float32Array(_HIST_LEN),_histCC=new Float32Array(_HIST_LEN);
 const _histSkipped=new Float32Array(_HIST_LEN);
-let _histIdx=0, _histLast=0;
-const _HIST_RATE=1000/30;
+let _histIdx=0,_histLast=0;
+const _HIST_RATE=66;
+
+/* Acumulador de skipped — incrementado por el scheduler, leído por _pushHistSample */
+let _skippedAccum=0;
 
 function _pushHistSample(t){
-  if(!noteData) return;
+  if(!noteData)return;
   const now=performance.now();
-  if(now-_histLast<_HIST_RATE) return;
+  if(now-_histLast<_HIST_RATE)return;
   _histLast=now;
   const nps=Math.round((upperBound(startArr,t)-lowerBound(startArr,t-0.25))*4);
   const poly=Math.max(0,upperBound(startArr,t)-lowerBound(endArr,t));
   let bpm=120;
-  if(midiMeta) for(const e of midiMeta.secToTempoMap){if(e.sec>t)break; bpm=Math.round(e.bpm);}
-  const ccps=_fileCCTimes.length>0 ? upperBound(_fileCCTimes,t)-lowerBound(_fileCCTimes,t-1.0) : 0;
-  _histNps[_histIdx]=nps; _histPoly[_histIdx]=poly; _histBpm[_histIdx]=bpm; _histCC[_histIdx]=ccps;
-  _histSkipped[_histIdx]=_skippedThisFrame;
+  if(midiMeta)for(const e of midiMeta.secToTempoMap){if(e.sec>t)break;bpm=Math.round(e.bpm);}
+  const ccps=_fileCCTimes.length>0?upperBound(_fileCCTimes,t)-lowerBound(_fileCCTimes,t-1.0):0;
+  _histNps[_histIdx]=nps;
+  _histPoly[_histIdx]=poly;
+  _histBpm[_histIdx]=bpm;
+  _histCC[_histIdx]=ccps;
+  _histSkipped[_histIdx]=_skippedAccum; /* leer y resetear */
+  _skippedAccum=0;
   _histIdx=(_histIdx+1)%_HIST_LEN;
 }
 
-function _drawMiniChart(canvasId, hist, color, valId){
-  const c=document.getElementById(canvasId); if(!c) return;
+function _drawMiniChart(canvasId,hist,color,valId){
+  const c=document.getElementById(canvasId);if(!c)return;
   const W=c.parentElement?c.parentElement.offsetWidth:c.offsetWidth;
   const H=c.parentElement?c.parentElement.offsetHeight:c.offsetHeight;
-  if(!W||!H) return;
-  if(c.width!==W||c.height!==H){c.width=W; c.height=H;}
+  if(!W||!H)return;
+  if(c.width!==W||c.height!==H){c.width=W;c.height=H;}
   const ctx2=c.getContext('2d');
   ctx2.clearRect(0,0,W,H);
-  let maxV=1; for(let i=0;i<_HIST_LEN;i++) if(hist[i]>maxV) maxV=hist[i];
+  let maxV=1;for(let i=0;i<_HIST_LEN;i++)if(hist[i]>maxV)maxV=hist[i];
   const wi=_histIdx;
-  ctx2.beginPath(); ctx2.moveTo(0,H);
+  ctx2.beginPath();ctx2.moveTo(0,H);
   for(let i=0;i<W;i++){
     const si=(wi+Math.floor(i*_HIST_LEN/W))%_HIST_LEN;
     const y=H-(hist[si]/maxV)*(H-2)-1;
-    if(i===0) ctx2.lineTo(0,y); else ctx2.lineTo(i,y);
+    if(i===0)ctx2.lineTo(0,y);else ctx2.lineTo(i,y);
   }
-  ctx2.lineTo(W,H); ctx2.closePath();
+  ctx2.lineTo(W,H);ctx2.closePath();
   const gr=ctx2.createLinearGradient(0,0,0,H);
-  gr.addColorStop(0,color+'66'); gr.addColorStop(1,color+'0a');
-  ctx2.fillStyle=gr; ctx2.fill();
+  gr.addColorStop(0,color+'66');gr.addColorStop(1,color+'0a');
+  ctx2.fillStyle=gr;ctx2.fill();
   ctx2.beginPath();
   for(let i=0;i<W;i++){
     const si=(wi+Math.floor(i*_HIST_LEN/W))%_HIST_LEN;
     const y=H-(hist[si]/maxV)*(H-2)-1;
-    if(i===0) ctx2.moveTo(0,y); else ctx2.lineTo(i,y);
+    if(i===0)ctx2.moveTo(0,y);else ctx2.lineTo(i,y);
   }
-  ctx2.strokeStyle=color; ctx2.lineWidth=1.5; ctx2.stroke();
+  ctx2.strokeStyle=color;ctx2.lineWidth=1.5;ctx2.stroke();
   if(valId){
     const cur=hist[(_histIdx+_HIST_LEN-1)%_HIST_LEN];
-    const el=document.getElementById(valId); if(el) el.textContent=Math.round(cur).toLocaleString();
+    const el=document.getElementById(valId);if(el)el.textContent=Math.round(cur).toLocaleString();
   }
 }
 
+let _chartLast=0;
 function _drawAllMiniCharts(){
-  _drawMiniChart('chartNps',     _histNps,     '#a78bfa', 'chartNpsVal');
-  _drawMiniChart('chartPoly',    _histPoly,    '#38bdf8', 'chartPolyVal');
-  _drawMiniChart('chartBpm',     _histBpm,     '#fb923c', 'chartBpmVal');
-  _drawMiniChart('chartCC',      _histCC,      '#34d399', 'chartCCVal');
-  _drawMiniChart('chartSkipped', _histSkipped, '#fb7185', 'chartSkippedVal');
+  const now=performance.now();
+  if(now-_chartLast<66)return;
+  _chartLast=now;
+  _drawMiniChart('chartNps',    _histNps,    '#a78bfa','chartNpsVal');
+  _drawMiniChart('chartPoly',   _histPoly,   '#38bdf8','chartPolyVal');
+  _drawMiniChart('chartBpm',    _histBpm,    '#fb923c','chartBpmVal');
+  _drawMiniChart('chartCC',     _histCC,     '#34d399','chartCCVal');
+  _drawMiniChart('chartSkipped',_histSkipped,'#fb7185','chartSkippedVal');
 }
 
 /* ═══ LIMITS CHART ═══ */
 let _limitsData=null;
 function buildLimitsData(){
-  if(!noteData||noteCount===0) return;
+  if(!noteData||noteCount===0)return;
   const step=0.5;
   const buckets=Math.ceil(fileDuration/step)+1;
   _limitsData=new Float32Array(buckets);
@@ -1298,105 +1269,130 @@ function buildLimitsData(){
   drawLimitsChart();
 }
 function drawLimitsChart(){
-  const canvas=document.getElementById('limitsChart'); if(!canvas) return;
-  const W=canvas.offsetWidth||400, H=52;
+  const canvas=document.getElementById('limitsChart');if(!canvas)return;
+  const W=canvas.offsetWidth||400,H=52;
   const dpr=window.devicePixelRatio||1;
-  canvas.width=W*dpr; canvas.height=H*dpr;
-  const ctx=canvas.getContext('2d'); ctx.scale(dpr,dpr);
+  canvas.width=W*dpr;canvas.height=H*dpr;
+  const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);
   ctx.clearRect(0,0,W,H);
-  if(!_limitsData||!_limitsData.length) return;
+  if(!_limitsData||!_limitsData.length)return;
   const n=_limitsData.length;
-  let maxV=1; for(let i=0;i<n;i++) if(_limitsData[i]>maxV) maxV=_limitsData[i];
-  ctx.beginPath(); ctx.moveTo(0,H);
-  for(let i=0;i<W;i++){const si=Math.floor(i/W*n); const y=H-(_limitsData[Math.min(si,n-1)]/maxV)*(H-3)-1; if(i===0)ctx.lineTo(0,y); else ctx.lineTo(i,y);}
-  ctx.lineTo(W,H); ctx.closePath();
+  let maxV=1;for(let i=0;i<n;i++)if(_limitsData[i]>maxV)maxV=_limitsData[i];
+  ctx.beginPath();ctx.moveTo(0,H);
+  for(let i=0;i<W;i++){const si=Math.floor(i/W*n);const y=H-(_limitsData[Math.min(si,n-1)]/maxV)*(H-3)-1;if(i===0)ctx.lineTo(0,y);else ctx.lineTo(i,y);}
+  ctx.lineTo(W,H);ctx.closePath();
   const gf=ctx.createLinearGradient(0,0,0,H);
-  gf.addColorStop(0,'rgba(129,140,248,.65)'); gf.addColorStop(1,'rgba(129,140,248,.07)');
-  ctx.fillStyle=gf; ctx.fill();
+  gf.addColorStop(0,'rgba(129,140,248,.65)');gf.addColorStop(1,'rgba(129,140,248,.07)');
+  ctx.fillStyle=gf;ctx.fill();
   ctx.beginPath();
-  for(let i=0;i<W;i++){const si=Math.floor(i/W*n); const y=H-(_limitsData[Math.min(si,n-1)]/maxV)*(H-3)-1; if(i===0)ctx.moveTo(0,y); else ctx.lineTo(i,y);}
-  ctx.strokeStyle='#818cf8'; ctx.lineWidth=1.4; ctx.stroke();
+  for(let i=0;i<W;i++){const si=Math.floor(i/W*n);const y=H-(_limitsData[Math.min(si,n-1)]/maxV)*(H-3)-1;if(i===0)ctx.moveTo(0,y);else ctx.lineTo(i,y);}
+  ctx.strokeStyle='#818cf8';ctx.lineWidth=1.4;ctx.stroke();
   if(_peakNpsSec>0&&fileDuration>0){
     const px=Math.floor((_peakNpsSec/fileDuration)*W);
-    ctx.strokeStyle='rgba(251,146,60,.8)'; ctx.lineWidth=1.5; ctx.setLineDash([3,3]);
-    ctx.beginPath(); ctx.moveTo(px,0); ctx.lineTo(px,H); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle='rgba(251,146,60,.9)'; ctx.font='bold 7.5px Inter,sans-serif'; ctx.textAlign='center';
-    ctx.fillText('⚡'+_peakNps, Math.min(px,W-22), 10);
+    ctx.strokeStyle='rgba(251,146,60,.8)';ctx.lineWidth=1.5;ctx.setLineDash([3,3]);
+    ctx.beginPath();ctx.moveTo(px,0);ctx.lineTo(px,H);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle='rgba(251,146,60,.9)';ctx.font='bold 7.5px Inter,sans-serif';ctx.textAlign='center';
+    ctx.fillText('⚡'+_peakNps,Math.min(px,W-22),10);
   }
   if(fileDuration>0&&currentTime>0){
     const px=Math.floor((currentTime/fileDuration)*W);
-    ctx.strokeStyle='rgba(196,181,253,.5)'; ctx.lineWidth=1;
-    ctx.beginPath(); ctx.moveTo(px,0); ctx.lineTo(px,H); ctx.stroke();
+    ctx.strokeStyle='rgba(196,181,253,.5)';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(px,0);ctx.lineTo(px,H);ctx.stroke();
   }
 }
 
 /* ═══ PERFORMANCE / FRAME-SKIP ═══ */
-let _lastFrameTs=0, _frameDropCount=0, _skipLevel=0, _skippedThisFrame=0;
-const _FRAME_BUDGET=1000/50, _DROP_THRESH=3, _RECOVER_THRESH=8;
+let _lastFrameTs=0,_frameDropCount=0,_skipLevel=0;
+const _FRAME_BUDGET=1000/50,_DROP_THRESH=3,_RECOVER_THRESH=8;
 let _goodFrameCount=0;
 
 function _evalFramePerf(ts){
-  if(_lastFrameTs===0){_lastFrameTs=ts; return;}
-  const dt=ts-_lastFrameTs; _lastFrameTs=ts;
+  if(_lastFrameTs===0){_lastFrameTs=ts;return;}
+  const dt=ts-_lastFrameTs;_lastFrameTs=ts;
   if(dt>_FRAME_BUDGET*1.5){
-    _frameDropCount++; _goodFrameCount=0;
-    if(_frameDropCount>=_DROP_THRESH){_skipLevel=Math.min(3,_skipLevel+1); _frameDropCount=0;}
+    _frameDropCount++;_goodFrameCount=0;
+    if(_frameDropCount>=_DROP_THRESH){_skipLevel=Math.min(3,_skipLevel+1);_frameDropCount=0;}
   }else{
-    _goodFrameCount++; _frameDropCount=0;
-    if(_goodFrameCount>=_RECOVER_THRESH){_skipLevel=Math.max(0,_skipLevel-1); _goodFrameCount=0;}
+    _goodFrameCount++;_frameDropCount=0;
+    if(_goodFrameCount>=_RECOVER_THRESH){_skipLevel=Math.max(0,_skipLevel-1);_goodFrameCount=0;}
   }
-  _skippedThisFrame=0;
 }
 function _shouldSkipVelocity(vel){
-  if(_skipLevel===0) return false;
-  if(_skipLevel===1 && vel<64) return true;
-  if(_skipLevel===2 && vel<96) return true;
-  if(_skipLevel===3) return true;
-  return false;
+  if(_skipLevel===0)return false;
+  if(_skipLevel===1&&vel<64)return true;
+  if(_skipLevel===2&&vel<96)return true;
+  return _skipLevel>=3;
 }
 
-/* ═══ MIDI SCHEDULER — sincronizado con playhead ═══
-   El scheduler dispara cuando startArr[i] < currentTime + SCHED_HORIZON.
-   Con direct-draw no hay retraso acumulado, así que SCHED_HORIZON = 0.25s
-   es suficiente para prebuffering de audio sin adelanto perceptible.      */
-const SCHED_HORIZON = 0.25; // segundos de look-ahead para el scheduler
+/* ═══════════════════════════════════════════════════════════════
+   MIDI SCHEDULER — tick-based dentro del RAF, sin setInterval
+
+   SINCRONIZACIÓN EXACTA con el playhead:
+   - El shader coloca startSec == currentTime exactamente en PLAYHEAD_FRAC.
+   - deltaMs = (startArr[i] - currentTime) * 1000
+       > 0  → nota futura: MIDI con timestamp = wallNow + deltaMs
+       0..−50ms → tolerancia de jitter: enviar ahora
+       < −50ms → nota pasada: skip silencioso
+   - SCHED_HORIZON_MS = 80ms = ~5 frames a 60fps de look-ahead.
+     Suficiente para que el MIDI flush llegue a tiempo sin adelanto audible.
+   ═══════════════════════════════════════════════════════════════ */
+const SCHED_HORIZON_MS = 80;
 const soundingNotes=new Map();
-let dispCursor=0, _schedInterval=null;
+let dispCursor=0;
 
 function resetDispatch(){
-  _midiAllOff(); soundingNotes.clear();
-  keyColors.fill(null); markKeysDirty();
-  _achNpsFired=false; _achPolyFired=false;
-  dispCursor=noteData&&noteCount>0 ? lowerBound(startArr, Math.max(0, currentTime-0.05)) : 0;
+  _midiAllOff();soundingNotes.clear();
+  keyColors.fill(null);markKeysDirty();
+  _achNpsFired=false;_achPolyFired=false;
+  dispCursor=noteData&&noteCount>0?lowerBound(startArr,Math.max(0,currentTime-0.05)):0;
 }
 
-function _runScheduler(){
-  if(!noteData||!isPlaying) return;
-  const now=currentTime, horizon=now+SCHED_HORIZON, wallNow=performance.now();
+function _runScheduler(wallNow){
+  if(!noteData||!isPlaying)return;
+  const now=currentTime;
+  const horizonSec=now+SCHED_HORIZON_MS/1000;
   let changed=false;
 
-  while(dispCursor<noteCount && startArr[dispCursor]<horizon){
+  while(dispCursor<noteCount&&startArr[dispCursor]<horizonSec){
     const i=dispCursor*5;
-    const s=noteData[i], p=noteData[i+2]|0, ch=noteData[i+3]|0;
+    const s=noteData[i],p=noteData[i+2]|0,ch=noteData[i+3]|0;
     const rawVel=Math.round(noteData[i+4]*127);
     const v=Math.max(32,Math.min(127,rawVel));
-    const endSec=noteData[i+1], noteDur=endSec-s;
+    const endSec=noteData[i+1];
     const k=ch*128+p;
-    /* deltaMs: cuántos ms faltan para que esta nota llegue al playhead */
-    const deltaMs=Math.max(0,(s-now)*1000);
-    if(s<now-0.1) _updatePostBuffer(noteDur);
-    if(s>=now-0.05){
-      if(_shouldSkipVelocity(v)){ _skippedThisFrame++; }
-      else{
-        /* Enviar MIDI con timestamp exacto = wallNow + deltaMs
-           así el sonido sale exactamente cuando la nota toca el playhead */
-        if(midiEnabled&&midiOutput) _enqueueMidi([0x90|ch,p,v], wallNow+deltaMs);
-        if(deltaMs<120){ keyColors[p]=CH_CSS[ch%16]; changed=true; }
-        soundingNotes.set(k,{endSec,ch,note:p,onMs:wallNow+deltaMs});
-      }
+    const deltaMs=(s-now)*1000;
+
+    _updatePostBuffer(endSec-s);
+
+    if(deltaMs<-50){
+      /* Nota muy pasada — descartada sin sonido */
+      dispCursor++;continue;
     }
+
+    if(_shouldSkipVelocity(v)){
+      _skippedAccum++;dispCursor++;continue;
+    }
+
+    /* MIDI con timestamp preciso: suena exactamente cuando llega al playhead */
+    if(midiEnabled&&midiOutput)
+      _enqueueMidi([0x90|ch,p,v], wallNow+Math.max(0,deltaMs));
+
+    /* Key highlight solo si la nota llega en <120ms */
+    if(deltaMs<120){keyColors[p]=CH_CSS[ch%16];changed=true;}
+    soundingNotes.set(k,{endSec,ch,note:p});
     dispCursor++;
   }
+
+  /* Note-offs */
+  soundingNotes.forEach((info,k)=>{
+    if(info.endSec<=now+0.1){
+      const dms=Math.max(0,(info.endSec-now)*1000);
+      if(midiEnabled&&midiOutput)_enqueueMidi([0x80|info.ch,info.note,0],wallNow+dms);
+      soundingNotes.delete(k);
+      if(dms<120){keyColors[info.note]=null;changed=true;}
+    }
+  });
+  if(changed)markKeysDirty();
 
   if(!_achNpsFired&&_peakNpsSec>0&&currentTime>=_peakNpsSec){
     _achNpsFired=true;
@@ -1406,128 +1402,134 @@ function _runScheduler(){
     _achPolyFired=true;
     showAchieve('poly','🎹','Peak Polyphony',_peakPoly.toLocaleString()+' notes','maximum simultaneous polyphony');
   }
-
-  soundingNotes.forEach((info,k)=>{
-    if(info.endSec<=now+0.1){
-      const deltaMs=Math.max(0,(info.endSec-now)*1000);
-      if(midiEnabled&&midiOutput) _enqueueMidi([0x80|info.ch,info.note,0], wallNow+deltaMs);
-      soundingNotes.delete(k);
-      if(deltaMs<120){ keyColors[info.note]=null; changed=true; }
-    }
-  });
-  if(changed) markKeysDirty();
 }
 
-function startScheduler(){ if(_schedInterval) clearInterval(_schedInterval); _schedInterval=setInterval(_runScheduler,5); _startMidiFlushLoop(); }
-function stopScheduler(){ if(_schedInterval){clearInterval(_schedInterval); _schedInterval=null;} }
-
-/* ═══ LIVE COUNTERS ═══ */
-let lfc=0;
+/* ═══ LIVE COUNTERS — throttled ~15fps ═══ */
+let _counterLast=0;
 function updateCounters(t){
-  if(++lfc%2!==0) return;
-  if(!noteData){ document.getElementById('liveNotes').textContent='0'; document.getElementById('liveNps').textContent='0'; return; }
-  const active=Math.max(0, upperBound(startArr,t)-lowerBound(endArr,t));
+  const now=performance.now();
+  if(now-_counterLast<66)return;
+  _counterLast=now;
+  if(!noteData){
+    document.getElementById('liveNotes').textContent='0';
+    document.getElementById('liveNps').textContent='0';
+    return;
+  }
+  const active=Math.max(0,upperBound(startArr,t)-lowerBound(endArr,t));
   document.getElementById('liveNotes').textContent=active.toLocaleString();
   const liveNps=Math.round((upperBound(startArr,t)-lowerBound(startArr,t-0.25))*4);
   document.getElementById('liveNps').textContent=liveNps.toLocaleString();
   let bpm=120;
-  if(midiMeta) for(const e of midiMeta.secToTempoMap){if(e.sec>t)break; bpm=e.bpm;}
+  if(midiMeta)for(const e of midiMeta.secToTempoMap){if(e.sec>t)break;bpm=e.bpm;}
   document.getElementById('liveBpm').textContent=bpm;
-  if(_peakNps>0){ const act=Math.min(1,liveNps/_peakNps); window._neuralActivity=act*.7+(window._neuralActivity||0)*.3; }
+  if(_peakNps>0){const act=Math.min(1,liveNps/_peakNps);window._neuralActivity=act*.7+(window._neuralActivity||0)*.3;}
   const dom=_getScreenDominantColor(t);
-  if(dom) window._neuralHueTarget=dom.hue;
+  if(dom)window._neuralHueTarget=dom.hue;
 }
 
-/* ═══ GL LOOP ═══ */
-let isPlaying=false, startedAt=0, pausedAt=0, currentTime=0, rafId=null;
-const fmtT=s=>{const m=Math.floor(s/60); return`${m}:${Math.floor(s%60).toString().padStart(2,'0')}`};
-let _glRafId=null, _fpsFrames=0, _fpsLast=0;
+/* ═══ GL LOOP — tick-based, todo dentro del RAF ═══ */
+let isPlaying=false,startedAt=0,pausedAt=0,currentTime=0,rafId=null;
+const fmtT=s=>{const m=Math.floor(s/60);return`${m}:${Math.floor(s%60).toString().padStart(2,'0')}`};
+let _glRafId=null,_fpsFrames=0,_fpsLast=0;
 
 function _glLoop(ts){
+  const wallNow=performance.now();
   _evalFramePerf(ts);
+
+  /* FPS counter */
   _fpsFrames++;
   if(ts-_fpsLast>=500){
     const fps=Math.round(_fpsFrames*1000/(ts-_fpsLast||1));
     const fpsEl=document.getElementById('fpsOverlay');
-    if(fpsEl) fpsEl.textContent=fps+' FPS'+((_skipLevel>0)?' ⚠':'');
-    _fpsFrames=0; _fpsLast=ts;
+    if(fpsEl)fpsEl.textContent=fps+' FPS'+((_skipLevel>0)?' ⚠':'');
+    _fpsFrames=0;_fpsLast=ts;
   }
-  if(isPlaying) _tickCacheRefill(currentTime);
+
+  /* Tiempo de reproducción */
+  if(isPlaying){
+    currentTime=pausedAt+(wallNow-startedAt)/1000;
+    if(noteData&&currentTime>=fileDuration){stopPlayback();return;}
+  }
+
+  /* Scheduler — corre en el mismo tick del RAF, sin overhead de IPC */
+  if(isPlaying)_runScheduler(wallNow);
+
+  /* Cache refill */
+  if(isPlaying)_tickCacheRefill(currentTime);
+
+  /* Render WebGL */
   renderFrame(currentTime);
-  if(window._midiInDrawHook) _midiInDrawHook();
+
+  /* MIDI In hook */
+  if(window._midiInDrawHook)_midiInDrawHook();
+
+  /* Keys — solo si hay cambios */
   drawKeys();
-  if(noteData){ _pushHistSample(currentTime); _drawAllMiniCharts(); }
-  if(isPlaying&&noteData&&_limitsData) drawLimitsChart();
+
+  /* Charts y contadores — ya throttled internamente */
+  if(noteData){_pushHistSample(currentTime);_drawAllMiniCharts();}
+  if(isPlaying&&noteData&&_limitsData)drawLimitsChart();
+
+  /* Progress bar + tiempo */
+  if(isPlaying&&noteData){
+    const pct=fileDuration>0?currentTime/fileDuration:0;
+    document.getElementById('progressFill').style.width=(pct*100).toFixed(2)+'%';
+    document.getElementById('tElapsed').textContent=fmtT(currentTime);
+    updateCounters(currentTime);
+  }
+
   _glRafId=requestAnimationFrame(_glLoop);
 }
-function startGLLoop(){ if(!_glRafId){_fpsLast=performance.now(); _glRafId=requestAnimationFrame(_glLoop);} }
-function stopGLLoop(){ if(_glRafId){cancelAnimationFrame(_glRafId); _glRafId=null;} }
+function startGLLoop(){if(!_glRafId){_fpsLast=performance.now();_glRafId=requestAnimationFrame(_glLoop);}}
+function stopGLLoop(){if(_glRafId){cancelAnimationFrame(_glRafId);_glRafId=null;}}
 
-/* ═══ SYNC KEY VISUALS ═══ */
 function _syncKeyVisuals(){
-  if(!noteData) return;
-  const t=currentTime;
+  if(!noteData)return;
   keyColors.fill(null);
-  const lo=lowerBound(startArr, t-0.03);
-  const hi=Math.min(noteCount, upperBound(startArr, t+0.05));
-  for(let i=lo;i<hi;i++){ if(endArr[i]>=t){ keyColors[noteData[i*5+2]|0]=CH_CSS[noteData[i*5+3]&15]; } }
+  const lo=lowerBound(startArr,currentTime-0.03);
+  const hi=Math.min(noteCount,upperBound(startArr,currentTime+0.05));
+  for(let i=lo;i<hi;i++){if(endArr[i]>=currentTime)keyColors[noteData[i*5+2]|0]=CH_CSS[noteData[i*5+3]&15];}
   markKeysDirty();
-}
-
-/* ═══ PLAYER LOOP ═══ */
-function playerLoop(){
-  currentTime=pausedAt+(performance.now()-startedAt)/1000;
-  if(!noteData){ if(isPlaying) rafId=requestAnimationFrame(playerLoop); return; }
-  if(currentTime>=fileDuration){ stopPlayback(); return; }
-  _syncKeyVisuals();
-  updateCounters(currentTime);
-  const pct=fileDuration>0 ? currentTime/fileDuration : 0;
-  document.getElementById('progressFill').style.width=(pct*100).toFixed(2)+'%';
-  document.getElementById('tElapsed').textContent=fmtT(currentTime);
-  document.getElementById('rollInfo').textContent=fmtT(currentTime)+' / '+fmtT(fileDuration);
-  if(isPlaying) rafId=requestAnimationFrame(playerLoop);
 }
 
 /* ═══ STOP / PLAY ═══ */
 function stopPlayback(){
   window._neuralActivity=0;
   isPlaying=false;
-  if(rafId){cancelAnimationFrame(rafId); rafId=null;}
-  stopScheduler(); _stopMidiFlushLoop();
-  _midiAllOff(); soundingNotes.clear();
-  pausedAt=0; startedAt=0; currentTime=0; dispCursor=0;
-  _skipLevel=0; _frameDropCount=0; _goodFrameCount=0; _skippedThisFrame=0;
-  keyColors.fill(null); markKeysDirty();
+  if(rafId){cancelAnimationFrame(rafId);rafId=null;}
+  _stopMidiFlushLoop();
+  _midiAllOff();soundingNotes.clear();
+  pausedAt=0;startedAt=0;currentTime=0;dispCursor=0;
+  _skipLevel=0;_frameDropCount=0;_goodFrameCount=0;_skippedAccum=0;
+  keyColors.fill(null);markKeysDirty();
   document.getElementById('progressFill').style.width='0%';
   document.getElementById('tElapsed').textContent='0:00';
   document.getElementById('btnPlay').textContent='▶';
   document.getElementById('liveNotes').textContent='0';
   document.getElementById('liveNps').textContent='0';
   _fboInvalid=true;
-  if(noteData){ _uploadCacheWindow(0); renderFrame(0); }
-  if(_limitsData) drawLimitsChart();
+  if(noteData){_uploadCacheWindow(0);renderFrame(0);}
+  if(_limitsData)drawLimitsChart();
 }
 
-document.getElementById('btnPlay').addEventListener('click', ()=>{
-  if(!noteData||document.getElementById('btnPlay').disabled) return;
+document.getElementById('btnPlay').addEventListener('click',()=>{
+  if(!noteData||document.getElementById('btnPlay').disabled)return;
   if(isPlaying){
     isPlaying=false;
-    if(rafId){cancelAnimationFrame(rafId); rafId=null;}
     pausedAt=currentTime;
-    _midiAllOff(); soundingNotes.clear();
-    stopScheduler();
+    _midiAllOff();soundingNotes.clear();
     document.getElementById('btnPlay').textContent='▶';
   }else{
-    if(pausedAt===0&&currentTime===0) resetDispatch();
+    if(pausedAt===0&&currentTime===0)resetDispatch();
     isPlaying=true;
     startedAt=performance.now()-pausedAt*1000;
     document.getElementById('btnPlay').textContent='⏸';
-    startScheduler(); startGLLoop();
-    rafId=requestAnimationFrame(playerLoop);
+    _startMidiFlushLoop();
+    startGLLoop();
   }
 });
-document.getElementById('btnStop').addEventListener('click', stopPlayback);
-document.getElementById('progressTrack').addEventListener('click', ()=>{});
+document.getElementById('btnStop').addEventListener('click',stopPlayback);
+document.getElementById('progressTrack').addEventListener('click',()=>{});
 </script>
 
 <script>
@@ -1535,13 +1537,13 @@ document.getElementById('progressTrack').addEventListener('click', ()=>{});
 
 /* ═══ FILE LOADING ═══ */
 function loadMidiFile(file){
-  if(!file) return;
+  if(!file)return;
   const ext=file.name.split('.').pop().toLowerCase();
-  if(ext!=='mid'&&ext!=='midi'){ showToast('Only .mid / .midi files supported'); return; }
-  stopPlayback(); stopGLLoop();
-  noteData=null; noteCount=0; startArr=null; endArr=null;
-  rawBufs=[]; rawTotal=0; midiMeta=null; fileDuration=0;
-  _longestExitedNote=0; _fileCCTimes=[];
+  if(ext!=='mid'&&ext!=='midi'){showToast('Only .mid / .midi files supported');return;}
+  stopPlayback();stopGLLoop();
+  noteData=null;noteCount=0;startArr=null;endArr=null;
+  rawBufs=[];rawTotal=0;midiMeta=null;fileDuration=0;
+  _longestExitedNote=0;_fileCCTimes=[];
   document.getElementById('fileName').textContent=file.name;
   document.getElementById('fileBar').classList.add('on');
   document.getElementById('fileNotes').textContent='parsing…';
@@ -1551,22 +1553,22 @@ function loadMidiFile(file){
   document.getElementById('btnPlay').disabled=true;
   showParseBar();
   spawnWorker();
-  file.arrayBuffer().then(buf=>{ worker.postMessage(buf,[buf]); }).catch(err=>{ showToast('Read error: '+err.message); hideParseBar(); });
+  file.arrayBuffer().then(buf=>{worker.postMessage(buf,[buf]);}).catch(err=>{showToast('Read error: '+err.message);hideParseBar();});
 }
 
-document.getElementById('rollWrap').addEventListener('click', e=>{
-  if(e.target.closest('#achieveContainer')||e.target.closest('#cpPop')) return;
+document.getElementById('rollWrap').addEventListener('click',e=>{
+  if(e.target.closest('#achieveContainer')||e.target.closest('#cpPop'))return;
   if(!noteData){
-    const inp=document.createElement('input'); inp.type='file'; inp.accept='.mid,.midi';
-    inp.onchange=()=>{ if(inp.files[0]) loadMidiFile(inp.files[0]); }; inp.click();
+    const inp=document.createElement('input');inp.type='file';inp.accept='.mid,.midi';
+    inp.onchange=()=>{if(inp.files[0])loadMidiFile(inp.files[0]);};inp.click();
   }
 });
 
-document.getElementById('btnClear').addEventListener('click', e=>{
+document.getElementById('btnClear').addEventListener('click',e=>{
   e.stopPropagation();
-  stopPlayback(); stopGLLoop();
-  noteData=null; noteCount=0; startArr=null; endArr=null;
-  rawBufs=[]; rawTotal=0; midiMeta=null; fileDuration=0; _fileCCTimes=[];
+  stopPlayback();stopGLLoop();
+  noteData=null;noteCount=0;startArr=null;endArr=null;
+  rawBufs=[];rawTotal=0;midiMeta=null;fileDuration=0;_fileCCTimes=[];
   _longestExitedNote=0;
   document.getElementById('fileBar').classList.remove('on');
   document.getElementById('rollOverlay').classList.remove('hidden');
@@ -1582,11 +1584,11 @@ document.getElementById('btnClear').addEventListener('click', e=>{
   document.getElementById('liveBpm').textContent='—';
   document.getElementById('chLegend').innerHTML='';
   document.getElementById('achieveContainer').innerHTML='';
-  keyColors.fill(null); markKeysDirty();
+  keyColors.fill(null);markKeysDirty();
   _fboInvalid=true;
   if(wglOk){
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.clearColor(0.012, 0.007, 0.026, 1.0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+    gl.clearColor(0.0,0.0,0.0,0.0);
     gl.clear(gl.COLOR_BUFFER_BIT);
   }
   startGLLoop();
@@ -1596,23 +1598,23 @@ document.getElementById('btnClear').addEventListener('click', e=>{
 /* ═══ DRAG & DROP ═══ */
 const dropOv=document.getElementById('globalDropOverlay');
 let _dragCount=0;
-document.addEventListener('dragenter', e=>{ e.preventDefault(); _dragCount++; if(_dragCount===1) dropOv.style.display='flex'; });
-document.addEventListener('dragleave', e=>{ _dragCount=Math.max(0,_dragCount-1); if(_dragCount===0) dropOv.style.display='none'; });
-document.addEventListener('dragover',  e=>{ e.preventDefault(); e.dataTransfer.dropEffect='copy'; });
-document.addEventListener('drop', e=>{
-  e.preventDefault(); _dragCount=0; dropOv.style.display='none';
+document.addEventListener('dragenter',e=>{e.preventDefault();_dragCount++;if(_dragCount===1)dropOv.style.display='flex';});
+document.addEventListener('dragleave',e=>{_dragCount=Math.max(0,_dragCount-1);if(_dragCount===0)dropOv.style.display='none';});
+document.addEventListener('dragover', e=>{e.preventDefault();e.dataTransfer.dropEffect='copy';});
+document.addEventListener('drop',e=>{
+  e.preventDefault();_dragCount=0;dropOv.style.display='none';
   const file=[...e.dataTransfer.files].find(f=>/\.(mid|midi)$/i.test(f.name));
-  if(file) loadMidiFile(file); else showToast('Drop a .mid or .midi file');
+  if(file)loadMidiFile(file);else showToast('Drop a .mid or .midi file');
 });
 
 /* ═══ KEYBOARD SHORTCUTS ═══ */
-document.addEventListener('keydown', e=>{
-  if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT'||e.target.tagName==='TEXTAREA') return;
-  if(e.code==='Space'){ e.preventDefault(); document.getElementById('btnPlay').click(); }
-  if(e.code==='Escape'){ document.getElementById('btnStop').click(); cpPop.classList.remove('show'); }
+document.addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT'||e.target.tagName==='TEXTAREA')return;
+  if(e.code==='Space'){e.preventDefault();document.getElementById('btnPlay').click();}
+  if(e.code==='Escape'){document.getElementById('btnStop').click();cpPop.classList.remove('show');}
   if(e.code==='KeyO'){
-    const inp=document.createElement('input'); inp.type='file'; inp.accept='.mid,.midi';
-    inp.onchange=()=>{ if(inp.files[0]) loadMidiFile(inp.files[0]); }; inp.click();
+    const inp=document.createElement('input');inp.type='file';inp.accept='.mid,.midi';
+    inp.onchange=()=>{if(inp.files[0])loadMidiFile(inp.files[0]);};inp.click();
   }
 });
 
@@ -1628,61 +1630,64 @@ document.addEventListener('keydown', e=>{
     </div>
     <div class="midi-note">MIDI In: play notes live on the keyboard display.</div>`;
 
-  let _midiInAccess=null, _midiInPort=null;
+  let _midiInAccess=null,_midiInPort=null;
   const liveKeys=new Map();
 
-  window._midiInReset=()=>{ liveKeys.forEach((_,note)=>{keyColors[note]=null;}); liveKeys.clear(); markKeysDirty(); };
+  window._midiInReset=()=>{liveKeys.forEach((_,note)=>{keyColors[note]=null;});liveKeys.clear();markKeysDirty();};
   window._midiInDrawHook=null;
 
   function _midiInMsg(e){
-    const [st,note,vel]=e.data;
-    const hi=st>>4, ch=st&0xF;
+    const[st,note,vel]=e.data;
+    const hi=st>>4,ch=st&0xF;
     if(hi===0x9&&vel>0){
-      keyColors[note]=CH_CSS[ch%16]; liveKeys.set(note,ch); markKeysDirty();
-      if(midiEnabled&&midiOutput) _enqueueMidi([0x90|ch,note,vel], performance.now());
+      keyColors[note]=CH_CSS[ch%16];liveKeys.set(note,ch);markKeysDirty();
+      if(midiEnabled&&midiOutput)_enqueueMidi([0x90|ch,note,vel],performance.now());
     }else if(hi===0x8||(hi===0x9&&vel===0)){
-      if(liveKeys.has(note)){keyColors[note]=null; liveKeys.delete(note); markKeysDirty();}
-      if(midiEnabled&&midiOutput) _enqueueMidi([0x80|ch,note,0], performance.now());
+      if(liveKeys.has(note)){keyColors[note]=null;liveKeys.delete(note);markKeysDirty();}
+      if(midiEnabled&&midiOutput)_enqueueMidi([0x80|ch,note,0],performance.now());
     }
   }
 
   function _midiInRefresh(){
-    if(!_midiInAccess) return;
-    const sel=document.getElementById('midiInSel'), prev=sel.value;
+    if(!_midiInAccess)return;
+    const sel=document.getElementById('midiInSel'),prev=sel.value;
     sel.innerHTML='<option value="">— select input —</option>';
-    _midiInAccess.inputs.forEach((p,id)=>{ const o=document.createElement('option'); o.value=id; o.textContent=p.name; sel.appendChild(o); });
-    if(prev) sel.value=prev;
+    _midiInAccess.inputs.forEach((p,id)=>{const o=document.createElement('option');o.value=id;o.textContent=p.name;sel.appendChild(o);});
+    if(prev)sel.value=prev;
     if(sel.value){
       const port=_midiInAccess.inputs.get(sel.value);
       if(port&&port!==_midiInPort){
-        if(_midiInPort) _midiInPort.onmidimessage=null;
-        _midiInPort=port; _midiInPort.onmidimessage=_midiInMsg;
+        if(_midiInPort)_midiInPort.onmidimessage=null;
+        _midiInPort=port;_midiInPort.onmidimessage=_midiInMsg;
         document.getElementById('midiInStatus').className='midi-status ok';
         document.getElementById('midiInStatus').textContent='← '+port.name;
       }
     }
   }
 
-  document.getElementById('btnMidiInRequest').addEventListener('click', async()=>{
+  document.getElementById('btnMidiInRequest').addEventListener('click',async()=>{
     try{
       _midiInAccess=await navigator.requestMIDIAccess({sysex:false});
       document.getElementById('midiInStatus').className='midi-status ok';
       document.getElementById('midiInStatus').textContent='Access granted';
-      _midiInRefresh(); _midiInAccess.onstatechange=_midiInRefresh;
+      _midiInRefresh();_midiInAccess.onstatechange=_midiInRefresh;
     }catch(err){
       document.getElementById('midiInStatus').className='midi-status err';
       document.getElementById('midiInStatus').textContent='Denied: '+err.message;
     }
   });
 
-  document.getElementById('btnMidiInRefresh').addEventListener('click', _midiInRefresh);
+  document.getElementById('btnMidiInRefresh').addEventListener('click',_midiInRefresh);
 
-  document.getElementById('midiInSel').addEventListener('change', e=>{
-    if(_midiInPort){_midiInPort.onmidimessage=null; _midiInPort=null;}
-    if(!e.target.value){ document.getElementById('midiInStatus').className='midi-status idle'; document.getElementById('midiInStatus').textContent='No input'; return; }
+  document.getElementById('midiInSel').addEventListener('change',e=>{
+    if(_midiInPort){_midiInPort.onmidimessage=null;_midiInPort=null;}
+    if(!e.target.value){
+      document.getElementById('midiInStatus').className='midi-status idle';
+      document.getElementById('midiInStatus').textContent='No input';return;
+    }
     const port=_midiInAccess&&_midiInAccess.inputs.get(e.target.value);
     if(port){
-      _midiInPort=port; _midiInPort.onmidimessage=_midiInMsg;
+      _midiInPort=port;_midiInPort.onmidimessage=_midiInMsg;
       document.getElementById('midiInStatus').className='midi-status ok';
       document.getElementById('midiInStatus').textContent='← '+port.name;
     }
@@ -1694,22 +1699,26 @@ document.addEventListener('keydown', e=>{
   resizeKeys();
   resizeRoll();
   startGLLoop();
-  document.getElementById('speedVal').textContent=NOTE_SPEED+'s';
+  document.getElementById('speedVal').textContent=NOTE_SPEED.toFixed(1)+'s';
   document.getElementById('postBufVal').textContent=POST_BUFFER.toFixed(1)+'s';
   _recalcPreBuffer();
-  updateGLColors();
+  _rebuildGLColorFlat();
+  if(wglOk){
+    gl.useProgram(glProgStrip);
+    gl.uniform3fv(uStrip_chColors,_glColorFlat);
+  }
   document.getElementById('btnPlay').disabled=true;
 
   setTimeout(()=>{
-    resizeRoll(); resizeKeys();
+    resizeRoll();resizeKeys();
     _fboInvalid=true;
     renderFrame(0);
     drawKeys();
-  }, 120);
+  },120);
 
   if(window.ResizeObserver){
     const ro=new ResizeObserver(()=>{
-      resizeRoll(); resizeKeys();
+      resizeRoll();resizeKeys();
       _fboInvalid=true;
     });
     ro.observe(document.getElementById('rollWrap'));
