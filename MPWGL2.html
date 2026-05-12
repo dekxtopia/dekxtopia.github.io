@@ -622,7 +622,6 @@ document.getElementById('speedSlider').addEventListener('input', e => {
   document.getElementById('speedVal').textContent = NOTE_SPEED + 's';
   _recalcPreBuffer();
   if(noteData && NOTE_SPEED > _cacheEnd - currentTime) _uploadCacheWindow(currentTime);
-  // Invalidar FBOs para que se redibuje desde cero con la nueva escala
   _fboInvalid = true;
 });
 
@@ -631,7 +630,6 @@ const PIANO_LO = 0;
 const PIANO_HI = 127;
 const PLAYHEAD_FRAC = 0.02;
 
-// ── Fullscreen quad (scroll y blit)
 const SRC_QUAD_VERT = `#version 300 es
 precision highp float;
 const vec2 P[4]=vec2[](vec2(-1,-1),vec2(1,-1),vec2(-1,1),vec2(1,1));
@@ -639,7 +637,6 @@ const vec2 U[4]=vec2[](vec2(0,0),vec2(1,0),vec2(0,1),vec2(1,1));
 out vec2 v_uv;
 void main(){ gl_Position=vec4(P[gl_VertexID],0,1); v_uv=U[gl_VertexID]; }`;
 
-// ── Scroll: desplaza textura anterior y limpia franja nueva
 const SRC_SCROLL_FRAG = `#version 300 es
 precision mediump float;
 in vec2 v_uv;
@@ -656,7 +653,6 @@ void main(){
   }
 }`;
 
-// ── Strip vert: misma lógica de posición que el shader original
 const SRC_STRIP_VERT = `#version 300 es
 precision highp float;
 in float a_s,a_e,a_p,a_c,a_v;
@@ -686,7 +682,6 @@ void main(){
   v_top=it?1.0:0.0;
 }`;
 
-// ── Strip frag: IDÉNTICO al original
 const SRC_STRIP_FRAG = `#version 300 es
 precision mediump float;
 in vec3 v_col; in float v_act,v_top; out vec4 o;
@@ -697,7 +692,6 @@ void main(){
   o=vec4(c,1.0);
 }`;
 
-// ── Blit: reproduce el clearColor original (.01,.007,.028,.45)
 const SRC_BLIT_FRAG = `#version 300 es
 precision mediump float;
 in vec2 v_uv;
@@ -726,7 +720,7 @@ let _vboCap=4000000;
 let pingFBO,pongFBO,pingTex,pongTex;
 let _fboW=0,_fboH=0;
 let _readFBO,_readTex,_writeFBO,_writeTex;
-let _fboInvalid=true; // fuerza redibujado completo cuando cambia escala o se resetea
+let _fboInvalid=true;
 
 function _csh(src,type){
   const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);
@@ -866,9 +860,9 @@ function updateGLColors(){
   gl.useProgram(glProgStrip);gl.uniform3fv(uStrip_chColors,flat);
 }
 
-/* ═══ RENDER FRAME — GPU PING-PONG ═══ */
+/* ═══ RENDER FRAME — GPU PING-PONG (CORREGIDO) ═══ */
 let _lastRenderT = -9999;
-const _STRIP_WIDTH_SEC = 0.05; // franja nueva = últimos 50ms
+const _STRIP_WIDTH_SEC = 0.05;
 
 function renderFrame(t){
   if(!wglOk)return;
@@ -882,49 +876,50 @@ function renderFrame(t){
   const dt = _fboInvalid ? totalSec : Math.max(0, t - _lastRenderT);
   _fboInvalid = false;
 
-  // ── 1. SCROLL: leer _readTex → escribir en _writeFBO ──
-  const scrollUV  = dt / totalSec;              // cuánto mover en UV
-  const clearFrom = 1.0 - _STRIP_WIDTH_SEC / totalSec; // desde donde limpiar
+  const scrollUV  = dt / totalSec;
+  const clearFrom = 1.0 - _STRIP_WIDTH_SEC / totalSec;
 
+  // ── 1. SCROLL ──
   gl.bindFramebuffer(gl.FRAMEBUFFER, _writeFBO);
   gl.viewport(0,0,w,h);
   gl.useProgram(glProgScroll);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, _readTex);
-  gl.uniform1i(uScroll_scrollUV_loc||uScroll_scrollUV, 0); // evitar conflicto nombre
   gl.uniform1i(uScroll_prev, 0);
   gl.uniform1f(uScroll_scrollUV, scrollUV);
   gl.uniform1f(uScroll_clearFrom, clearFrom);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-  // ── 2. STRIP: dibujar notas nuevas sobre _writeFBO ──
+  // ── 2. STRIP ──
   if(totalVboNotes > 0){
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.useProgram(glProgStrip);
-    updateGLColors();
+    const flat=new Float32Array(48);
+    for(let i=0;i<16;i++){const[r,g,b]=hexToRgb01(CH_CSS[i]);flat[i*3]=r;flat[i*3+1]=g;flat[i*3+2]=b;}
+    gl.uniform3fv(uStrip_chColors,flat);
     gl.uniform1f(uStrip_t,  t);
     gl.uniform1f(uStrip_ah, NOTE_SPEED);
     gl.uniform1f(uStrip_bh, POST_BUFFER);
-    gl.uniform1f(uStrip_stripX, clearFrom * 2.0 - 1.0); // UV → NDC
+    gl.uniform1f(uStrip_stripX, clearFrom * 2.0 - 1.0);
     gl.bindVertexArray(stripVAO);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, totalVboNotes);
     gl.bindVertexArray(null);
   }
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
-  // ── 3. SWAP ping-pong ──
+  // ── 3. SWAP ──
   _swapFBOs();
 
-  // ── 4. BLIT al canvas ──
+  // ── 4. BLIT ──
   gl.viewport(0,0,w,h);
   gl.useProgram(glProgBlit);
   gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, _readTex); // después del swap, _readTex = frame recién escrito
+  gl.bindTexture(gl.TEXTURE_2D, _readTex);
   gl.uniform1i(uBlit_tex, 0);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-  // ── 5. PLAYHEAD (scissor, igual que el original) ──
+  // ── 5. PLAYHEAD ──
   const px = Math.floor(PLAYHEAD_FRAC * w);
   gl.enable(gl.SCISSOR_TEST);
   gl.scissor(px, 0, 2, h);
@@ -938,9 +933,12 @@ function renderFrame(t){
 
 function resizeRoll(){
   const r=document.getElementById('rollWrap').getBoundingClientRect();
-  rollCanvas.width=Math.floor(r.width);
-  rollCanvas.height=Math.floor(r.height||240);
-  _fboInvalid=true; // FBOs se recrean al cambiar tamaño
+  const newW=Math.floor(r.width);
+  const newH=Math.floor(r.height||240);
+  if(rollCanvas.width===newW&&rollCanvas.height===newH)return;
+  rollCanvas.width=newW;
+  rollCanvas.height=newH;
+  _fboInvalid=true;
   const ov=document.getElementById('midiInOverlay');
   if(ov){ov.width=rollCanvas.width;ov.height=rollCanvas.height;}
 }
@@ -1024,7 +1022,19 @@ function drawKeys(){
     if(!col){kctx.fillStyle='rgba(255,255,255,.05)';kctx.fillRect(x+1,2,bw*.35,bh*.6);}
   }
 }
-function resizeKeys(){const r=document.getElementById('keysWrap').getBoundingClientRect();keysCanvas.width=Math.floor(r.width);keysCanvas.height=Math.floor(r.height||100);_keysDirty=true;drawKeys();}
+function resizeKeys(){
+  const r=document.getElementById('keysWrap').getBoundingClientRect();
+  const newW=Math.floor(r.width);
+  const newH=Math.floor(r.height||100);
+  if(keysCanvas.width===newW&&keysCanvas.height===newH)return;
+  keysCanvas.width=newW;
+  keysCanvas.height=newH;
+  _keysDirty=true;
+  drawKeys();
+}
+</script>
+<script>
+'use strict';
 
 /* ═══ MIDI OUTPUT ═══ */
 let midiAccess=null,midiOutput=null,midiEnabled=true;
@@ -1215,9 +1225,18 @@ function finalizeMidi(channels){
   updateGLColors();
   computePeaks();
   buildLimitsData();
-  resizeRoll();resizeKeys();
+  // FIX: forzar resize antes de renderizar para garantizar dimensiones correctas
+  resizeRoll();
+  resizeKeys();
+  _fboInvalid=true;
   startGLLoop();
-  renderFrame(0);
+  // FIX: doble rAF para asegurar que el layout ya está calculado antes del primer render
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    resizeRoll();
+    resizeKeys();
+    _uploadCacheWindow(0);
+    renderFrame(0);
+  }));
   startScheduler();
   showToast('✓ Loaded '+noteCount.toLocaleString()+' notes');
   window._neuralHueTarget=270;
@@ -1547,6 +1566,7 @@ document.getElementById('btnPlay').addEventListener('click',()=>{
 document.getElementById('btnStop').addEventListener('click',stopPlayback);
 document.getElementById('progressTrack').addEventListener('click',()=>{});
 </script>
+
 <script>
 'use strict';
 
@@ -1729,8 +1749,9 @@ document.addEventListener('keydown',e=>{
   });
 })();
 
-/* ═══ INIT ═══ */
+/* ═══ INIT (CORREGIDO) ═══ */
 (()=>{
+  // Primer resize síncrono
   resizeKeys();
   resizeRoll();
   startGLLoop();
@@ -1740,9 +1761,21 @@ document.addEventListener('keydown',e=>{
   updateGLColors();
   document.getElementById('btnPlay').disabled=true;
 
-  // Observer para re-calcular tamaño del canvas cuando la columna derecha cambia
+  // FIX: segundo resize tras primer paint para garantizar dimensiones reales
+  setTimeout(()=>{
+    resizeRoll();
+    resizeKeys();
+    _fboInvalid=true;
+    renderFrame(0);
+    drawKeys();
+  }, 120);
+
   if(window.ResizeObserver){
-    const ro=new ResizeObserver(()=>{resizeRoll();resizeKeys();});
+    const ro=new ResizeObserver(()=>{
+      resizeRoll();
+      resizeKeys();
+      _fboInvalid=true;
+    });
     ro.observe(document.getElementById('rollWrap'));
     ro.observe(document.getElementById('keysWrap'));
   }
