@@ -56,7 +56,7 @@ nav{position:sticky;top:0;z-index:100;backdrop-filter:blur(18px) saturate(160%);
 .badge-sm{font-size:.6rem;font-weight:700;letter-spacing:.05em;padding:.1rem .35rem;border-radius:5px;border:1px solid rgba(167,139,250,.18);background:rgba(99,63,210,.12);color:#a78bfa;white-space:nowrap}
 .btn-xs{width:20px;height:20px;border-radius:5px;background:rgba(167,139,250,.07);border:1px solid rgba(167,139,250,.13);display:flex;align-items:center;justify-content:center;color:rgba(196,181,253,.5);transition:background 130ms;flex-shrink:0;font-size:.68rem}
 .btn-xs:hover{background:rgba(167,139,250,.18);color:#c4b5fd}
-.live-row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:.32rem}
+.live-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.32rem}
 .live-card{background:rgba(255,255,255,.025);border:1px solid rgba(167,139,250,.1);border-radius:7px;padding:.28rem .45rem;display:flex;flex-direction:column;gap:.04rem}
 .live-lbl{font-size:.55rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:rgba(196,181,253,.3)}
 .live-val{font-family:'Space Grotesk',sans-serif;font-size:.88rem;font-weight:700;color:#c4b5fd;font-variant-numeric:tabular-nums;line-height:1.05}
@@ -116,6 +116,17 @@ nav{position:sticky;top:0;z-index:100;backdrop-filter:blur(18px) saturate(160%);
 .chart-box canvas{position:absolute;inset:0;width:100%!important;height:100%!important}
 .chart-lbl{position:absolute;top:3px;left:5px;font-size:.52rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:rgba(196,181,253,.38);pointer-events:none;z-index:1}
 .chart-val{position:absolute;top:3px;right:5px;font-size:.58rem;font-weight:700;color:rgba(196,181,253,.6);font-variant-numeric:tabular-nums;pointer-events:none;z-index:1}
+/* Buffer config row */
+.buf-cfg-row{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;padding:.22rem .3rem;background:rgba(99,63,210,.06);border:1px solid rgba(167,139,250,.1);border-radius:6px}
+.buf-cfg-lbl{font-size:.58rem;color:rgba(196,181,253,.38);white-space:nowrap}
+.buf-cfg-val{font-size:.62rem;color:#a78bfa;font-variant-numeric:tabular-nums;min-width:3ch;white-space:nowrap}
+/* FPS overlay on roll */
+#fpsOverlay{position:absolute;bottom:6px;left:8px;font-family:'Space Grotesk',sans-serif;font-size:.68rem;font-weight:700;color:rgba(196,181,253,.55);pointer-events:none;z-index:20;font-variant-numeric:tabular-nums;text-shadow:0 1px 4px rgba(0,0,0,.8)}
+/* Perf chart box */
+.perf-chart-box{position:relative;height:44px;border-radius:6px;overflow:hidden;background:rgba(255,255,255,.015);border:1px solid rgba(167,139,250,.09);width:100%}
+.perf-chart-box canvas{position:absolute;inset:0;width:100%!important;height:100%!important}
+.perf-chart-lbl{position:absolute;top:3px;left:5px;font-size:.52rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:rgba(251,113,133,.55);pointer-events:none;z-index:1}
+.perf-chart-val{position:absolute;top:3px;right:5px;font-size:.58rem;font-weight:700;color:rgba(251,113,133,.8);font-variant-numeric:tabular-nums;pointer-events:none;z-index:1}
 #achieveContainer{position:absolute;top:8px;right:8px;z-index:50;display:flex;flex-direction:column;gap:.35rem;pointer-events:none}
 .ach-toast{background:linear-gradient(135deg,rgba(18,10,44,.97),rgba(45,22,88,.97));border:1px solid rgba(167,139,250,.4);border-radius:10px;padding:.42rem .7rem;min-width:155px;max-width:210px;box-shadow:0 4px 28px rgba(99,63,210,.65);opacity:0;transform:translateX(18px);transition:opacity 280ms,transform 280ms;pointer-events:auto;position:relative}
 .ach-toast.show{opacity:1;transform:translateX(0)}
@@ -202,11 +213,11 @@ footer a:hover{color:#a78bfa}
     <button class="btn-xs" id="btnClear" title="Clear">✕</button>
   </div>
 
+  <!-- Live counters: Active / NPS / BPM — FPS moved to visualizer overlay -->
   <div class="live-row">
     <div class="live-card"><div class="live-lbl">Active</div><div class="live-val" id="liveNotes">0</div></div>
     <div class="live-card"><div class="live-lbl">NPS</div><div class="live-val" id="liveNps">0</div></div>
     <div class="live-card"><div class="live-lbl">BPM</div><div class="live-val" id="liveBpm">—</div></div>
-    <div class="live-card"><div class="live-lbl">FPS</div><div class="live-val" id="liveFps">0</div></div>
   </div>
 
   <div id="rollInfo" style="display:none"></div>
@@ -232,6 +243,16 @@ footer a:hover{color:#a78bfa}
     <span class="speed-val" id="speedVal">3.5s</span>
   </div>
 
+  <!-- Buffer configuration -->
+  <div class="buf-cfg-row">
+    <span class="buf-cfg-lbl">Pre-buffer</span>
+    <input type="range" id="preBufSlider" min="5" max="120" step="1" value="20"
+      style="-webkit-appearance:none;appearance:none;flex:1;height:3px;border-radius:999px;background:rgba(167,139,250,.18);outline:none;cursor:pointer;min-width:50px">
+    <span class="buf-cfg-val" id="preBufVal">20s</span>
+    <span class="buf-cfg-lbl" style="margin-left:.4rem">Post-buffer</span>
+    <span class="buf-cfg-val" id="postBufVal">auto</span>
+  </div>
+
   <div class="ch-legend" id="chLegend"></div>
 
   <div id="limitsChartSection" style="display:none">
@@ -244,6 +265,12 @@ footer a:hover{color:#a78bfa}
     <div class="chart-box"><canvas id="chartPoly"></canvas><div class="chart-lbl">Polyphony</div><div class="chart-val" id="chartPolyVal">0</div></div>
     <div class="chart-box"><canvas id="chartBpm"></canvas><div class="chart-lbl">BPM</div><div class="chart-val" id="chartBpmVal">—</div></div>
     <div class="chart-box"><canvas id="chartCC"></canvas><div class="chart-lbl">CC/s</div><div class="chart-val" id="chartCCVal">0</div></div>
+    <!-- Performance indicator: skipped velocities mountain chart -->
+    <div class="perf-chart-box">
+      <canvas id="chartSkipped"></canvas>
+      <div class="perf-chart-lbl">Skipped vel</div>
+      <div class="perf-chart-val" id="chartSkippedVal">0</div>
+    </div>
   </div>
 
   <div class="midi-out-section">
@@ -295,6 +322,8 @@ footer a:hover{color:#a78bfa}
   <div class="roll-wrap" id="rollWrap">
     <canvas id="rollCanvas"></canvas>
     <div id="achieveContainer"></div>
+    <!-- FPS overlay — bottom left of visualizer -->
+    <div id="fpsOverlay">0 FPS</div>
     <div class="roll-overlay" id="rollOverlay">
       <div class="overlay-icon">🎹</div>
       <span>Drop a MIDI file here or click to open</span>
@@ -319,9 +348,7 @@ footer a:hover{color:#a78bfa}
 <div id="toast"></div>
 
 <!-- ═══════════════════════════════════════════════════
-     WEB WORKER — parser MIDI embebido
-     El worker ahora también emite los tiempos de CC
-     como un array separado en el mensaje final.
+     WEB WORKER — embedded MIDI parser
 ════════════════════════════════════════════════════ -->
 <script id="workerSrc" type="text/plain">
 'use strict';
@@ -397,7 +424,6 @@ self.onmessage = function(e) {
   const pending={};
   let chunkBuf=new Float32Array(CHUNK_SIZE*5);
   let chunkPos=0,totalNotes=0,ccCount=0;
-  /* Acumular tiempos de CC reales para el gráfico */
   const ccTimes=[];
 
   function flushChunk(final){
@@ -445,7 +471,6 @@ self.onmessage = function(e) {
           emitNote(tickToSec(on.tick),tickToSec(tick),note,ch,on.vel);
         }
       }else if(hi===0xB){
-        /* Registrar tiempo real del evento CC */
         ccTimes.push(tickToSec(tick));
         p+=2;ccCount++;
       }
@@ -555,7 +580,8 @@ function hexToHue(hex){
 /* ═══ COLOR PICKER POPUP ═══ */
 const cpPop=document.getElementById('cpPop');
 let _cpCh=-1;
-['#818cf8','#a78bfa','#c4b5fd','#e879f9','#fb923c','#facc15','#f87171','#fb7185','#38bdf8','#60a5fa','#34d399','#22d3ee','#4ade80','#a3e635','#fbbf24','#f472b6'].forEach(col=>{
+['#818cf8','#a78bfa','#c4b5fd','#e879f9','#fb923c','#facc15','#f87171','#fb7185',
+ '#38bdf8','#60a5fa','#34d399','#22d3ee','#4ade80','#a3e635','#fbbf24','#f472b6'].forEach(col=>{
   const s=document.createElement('button');s.className='cp-sw';s.style.background=col;s.title=col;
   s.addEventListener('click',()=>{CH_CSS[_cpCh]=col;_applyChColor();});
   document.getElementById('cpSwatches').appendChild(s);
@@ -587,27 +613,50 @@ function showAchieve(id,icon,title,val,sub){
   setTimeout(()=>{el.classList.add('hide');setTimeout(()=>el.remove(),320);},5000);
 }
 
+/* ═══ BUFFER CONFIG ═══ */
+/* PRE_BUFFER: notas que aún no han salido (hacia adelante) — configurable, default 20s */
+/* POST_BUFFER: notas que ya pasaron — doble de la nota más larga que haya salido */
+let PRE_BUFFER = 20;   /* segundos hacia adelante */
+let POST_BUFFER = 0;   /* se calcula dinámicamente */
+let _longestExitedNote = 0; /* duración más larga de notas que ya salieron de pantalla */
+
+/* Actualizar POST_BUFFER = 2x la nota más larga que haya salido */
+function _updatePostBuffer(noteDuration){
+  if(noteDuration > _longestExitedNote){
+    _longestExitedNote = noteDuration;
+    POST_BUFFER = _longestExitedNote * 2;
+    document.getElementById('postBufVal').textContent = POST_BUFFER.toFixed(1)+'s';
+  }
+}
+
+document.getElementById('preBufSlider').addEventListener('input', e=>{
+  PRE_BUFFER = parseInt(e.target.value);
+  document.getElementById('preBufVal').textContent = PRE_BUFFER+'s';
+  /* Re-upload cache window con nuevo pre-buffer */
+  if(noteData) _uploadCacheWindow(currentTime);
+});
+
 /* ═══ WEBGL2 ═══ */
-/* AHEAD = 45s adelante, BEHIND = 0 — notas desaparecen al salir por la izquierda */
-const AHEAD = 45;
-const BEHIND = 0;
-const PLAYHEAD_FRAC = 0.02; /* playhead casi al borde izquierdo */
+/* Horizontal range always fixed to 127 keys (MIDI 0–127) */
+const PIANO_LO = 0;
+const PIANO_HI = 127;
+const PLAYHEAD_FRAC = 0.02;
 
 const VERT=`#version 300 es
 precision highp float;
 in float a_s,a_e,a_p,a_c,a_v;
-uniform float u_t,u_ah,u_bh,u_plo,u_phi;
+uniform float u_t,u_ah,u_bh;
 uniform vec3 u_chColors[16];
 out vec3 v_col;out float v_act,v_top;
 void main(){
   float ws=u_t-u_bh,we=u_t+u_ah;
-  /* Descartar notas fuera de ventana — desaparecen cuando end < ws */
   if(a_e<ws||a_s>we){gl_Position=vec4(10.,10.,0.,1.);return;}
   bool ir=gl_VertexID>=2,it=gl_VertexID==0||gl_VertexID==2;
   float xn=1./(u_ah+u_bh);
   float x=ir?clamp((a_e-ws)*xn,0.,1.):clamp((a_s-ws)*xn,0.,1.);
-  float pr=u_phi-u_plo,nh=1./pr;
-  float y=it?(a_p-u_plo)/pr+nh:(a_p-u_plo)/pr;
+  /* Fixed piano range 0-127: always 128 semitones wide */
+  float pr=128.0,nh=1./pr;
+  float y=it?(a_p/pr+nh):(a_p/pr);
   gl_Position=vec4(x*2.-1.,y*2.-1.,0.,1.);
   v_col=u_chColors[int(a_c)%16];
   v_act=(a_s<=u_t&&a_e>=u_t)?1.:0.;v_top=it?1.:0.;
@@ -626,8 +675,8 @@ const rollCanvas=document.getElementById('rollCanvas');
 const gl=rollCanvas.getContext('webgl2',{alpha:true,antialias:false,powerPreference:'high-performance'});
 const wglOk=!!gl;
 
-let glProg,vao,iVBO,totalVboNotes=0,pitchLo=127,pitchHi=0;
-let uT,uAh,uBh,uPlo,uPhi,uChColors;
+let glProg,vao,iVBO,totalVboNotes=0,pitchLo=0,pitchHi=127;
+let uT,uAh,uBh,uChColors;
 let _vboCap=4000000;
 
 if(wglOk){
@@ -639,8 +688,9 @@ if(wglOk){
   if(!gl.getProgramParameter(glProg,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(glProg));
   gl.useProgram(glProg);
   uT=gl.getUniformLocation(glProg,'u_t');uAh=gl.getUniformLocation(glProg,'u_ah');
-  uBh=gl.getUniformLocation(glProg,'u_bh');uPlo=gl.getUniformLocation(glProg,'u_plo');
-  uPhi=gl.getUniformLocation(glProg,'u_phi');uChColors=gl.getUniformLocation(glProg,'u_chColors');
+  uBh=gl.getUniformLocation(glProg,'u_bh');
+  /* u_plo / u_phi removed — fixed in shader */
+  uChColors=gl.getUniformLocation(glProg,'u_chColors');
   vao=gl.createVertexArray();gl.bindVertexArray(vao);
   iVBO=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,iVBO);
   gl.bufferData(gl.ARRAY_BUFFER,_vboCap*5*4,gl.DYNAMIC_DRAW);
@@ -654,16 +704,13 @@ if(wglOk){
   gl.clearColor(.01,.007,.028,.45);
 }
 
-/* ═══ CACHE — 45s adelante, 0 atrás ═══ */
-const CACHE_AHEAD  = 45;
-const CACHE_BEHIND = 0;
-const CACHE_REFILL_THRESHOLD = 10;
+/* ═══ CACHE — uses PRE_BUFFER ahead, POST_BUFFER behind ═══ */
 let _cacheStart=0,_cacheEnd=0;
 
 function _uploadCacheWindow(t){
   if(!wglOk||!noteData||noteCount===0)return;
-  const winStart=Math.max(0,t-CACHE_BEHIND);
-  const winEnd=Math.min(fileDuration,t+CACHE_AHEAD);
+  const winStart=Math.max(0,t-POST_BUFFER);
+  const winEnd=Math.min(fileDuration,t+PRE_BUFFER);
   _cacheStart=winStart;_cacheEnd=winEnd;
   const lo=lowerBound(startArr,winStart);
   const hi=upperBound(startArr,winEnd);
@@ -678,14 +725,15 @@ function _uploadCacheWindow(t){
   gl.bindBuffer(gl.ARRAY_BUFFER,iVBO);
   gl.bufferSubData(gl.ARRAY_BUFFER,0,noteData.subarray(lo*5,hi*5));
   totalVboNotes=count;
-  pitchLo=127;pitchHi=0;
-  for(let i=lo;i<hi;i++){const p=noteData[i*5+2];if(p<pitchLo)pitchLo=p;if(p>pitchHi)pitchHi=p;}
+  /* Fixed piano — no dynamic pitch range update needed */
+  pitchLo=PIANO_LO; pitchHi=PIANO_HI;
 }
 
 function _tickCacheRefill(t){
   if(!wglOk||!noteData)return;
   const remaining=_cacheEnd-t;
-  if(remaining<CACHE_REFILL_THRESHOLD||t<_cacheStart)_uploadCacheWindow(t);
+  /* Refill if less than 20% of pre-buffer remains ahead, or fell behind start */
+  if(remaining<PRE_BUFFER*0.2||t<_cacheStart)_uploadCacheWindow(t);
 }
 
 function _rebindVAO(){
@@ -711,8 +759,9 @@ function renderFrame(t){
   gl.viewport(0,0,w,h);gl.clear(gl.COLOR_BUFFER_BIT);
   if(totalVboNotes>0){
     gl.useProgram(glProg);updateGLColors();
-    gl.uniform1f(uT,t);gl.uniform1f(uAh,AHEAD);gl.uniform1f(uBh,BEHIND);
-    gl.uniform1f(uPlo,Math.max(0,pitchLo-2));gl.uniform1f(uPhi,Math.min(127,pitchHi+2)+1);
+    gl.uniform1f(uT,t);
+    gl.uniform1f(uAh,PRE_BUFFER);
+    gl.uniform1f(uBh,POST_BUFFER);
     gl.bindVertexArray(vao);gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,totalVboNotes);gl.bindVertexArray(null);
   }
   const px=Math.floor(PLAYHEAD_FRAC*w);
@@ -738,10 +787,11 @@ document.getElementById('volSlider').addEventListener('input',e=>{
   if(midiEnabled&&midiOutput)for(let ch=0;ch<16;ch++)try{midiOutput.send([0xB0|ch,7,v])}catch(_){}
 });
 
-/* ═══ KEYBOARD CANVAS ═══ */
+/* ═══ KEYBOARD CANVAS — always 127 keys wide ═══ */
 const keysCanvas=document.getElementById('keysCanvas');
 const kctx=keysCanvas.getContext('2d',{alpha:false});
 const isBlack=n=>[1,3,6,8,10].includes(n%12);
+/* Always render all 128 MIDI notes (0-127) */
 let whiteCount=0;
 const wIdx=new Int16Array(128),wOf=new Int16Array(128);
 {let wi=0;for(let n=0;n<128;n++){if(!isBlack(n)){wIdx[n]=wi;wi++}else{wIdx[n]=-1;wOf[n]=wi-1}}whiteCount=wi;}
@@ -765,6 +815,7 @@ function drawKeys(){
   _keysDirty=false;
   const W=keysCanvas.width,H=keysCanvas.height;
   if(W<4||H<4)return;
+  /* Always span all 128 MIDI notes */
   const kw=W/whiteCount,bw=kw*.6,bh=H*.63;
   const rad=Math.min(3,kw*.22);
   const domCol=_getScreenDominantColor(currentTime||0);
@@ -813,15 +864,8 @@ function drawKeys(){
 }
 function resizeKeys(){const r=document.getElementById('keysWrap').getBoundingClientRect();keysCanvas.width=Math.floor(r.width);keysCanvas.height=Math.floor(r.height||100);_keysDirty=true;drawKeys();}
 
-/* ═══ MIDI OUTPUT — thread separado via MessageChannel ═══
-   El scheduler corre en su propio setInterval (5ms) completamente
-   desacoplado del RAF del visualizador. Los eventos MIDI se encolan
-   y se despachan sin bloquear nunca el loop de render.
-   Velocity mínima: 32 — todos los eventos ≥ 32 se envían sin skipear.
-*/
+/* ═══ MIDI OUTPUT ═══ */
 let midiAccess=null,midiOutput=null,midiEnabled=true;
-
-/* Cola de eventos MIDI para despacho no-bloqueante */
 const _midiQueue=[];
 let _midiFlushId=null;
 
@@ -830,7 +874,6 @@ function _enqueueMidi(data, timestampMs){
 }
 
 function _flushMidiQueue(){
-  /* Drena la cola en un slice de tiempo para no bloquear */
   const now=performance.now();
   let i=0;
   while(i<_midiQueue.length){
@@ -843,7 +886,6 @@ function _flushMidiQueue(){
   if(i>0)_midiQueue.splice(0,i);
 }
 
-/* Flush loop independiente a 1ms — no afecta el visualizador */
 function _startMidiFlushLoop(){
   if(_midiFlushId)return;
   _midiFlushId=setInterval(_flushMidiQueue,1);
@@ -895,8 +937,6 @@ function _midiAllOff(){
   }
 }
 
-/* Velocity mínima 32: todos los note-on con vel original >= 32 se envían,
-   los que son 0 se clampean a 32 para no perderse */
 function midiNoteOn(ch,n,v){
   if(!midiEnabled||!midiOutput)return;
   const vel=Math.max(32,Math.min(127,v));
@@ -913,7 +953,6 @@ function playNoteOff(ch,note){keyColors[note]=null;markKeysDirty();midiNoteOff(c
 let noteData=null,noteCount=0,startArr=null,endArr=null;
 let midiMeta=null,fileDuration=0,rawBufs=[],rawTotal=0;
 let _peakNps=0,_peakNpsSec=0,_peakPoly=0,_peakPolySec=0;
-/* Array de tiempos CC reales del archivo (en segundos), ordenado */
 let _fileCCTimes=[];
 
 function lowerBound(arr,v){let lo=0,hi=arr.length;while(lo<hi){const m=(lo+hi)>>1;if(arr[m]<v)lo=m+1;else hi=m;}return lo;}
@@ -992,9 +1031,11 @@ function handleWorkerMsg(ev){
     document.getElementById('fileNotes').textContent=rawTotal.toLocaleString()+' notes';
     if(m.final){
       midiMeta={tempoMap:m.tempoMap,secToTempoMap:m.secToTempoMap,ppq:m.ppq,numTracks:m.numTracks,fmt:m.fmt,ccCount:m.ccCount||0};
-      /* Guardar tiempos CC reales del archivo, ya ordenados por el worker */
       _fileCCTimes=m.ccTimes||[];
       buildSortedArrays();
+      /* Reset dynamic post-buffer */
+      _longestExitedNote=0;POST_BUFFER=0;
+      document.getElementById('postBufVal').textContent='0.0s';
       if(wglOk){_cacheStart=0;_cacheEnd=0;_uploadCacheWindow(0);}
       const channels=new Set();for(let i=0;i<noteCount;i++)channels.add(noteData[i*5+3]|0);
       finalizeMidi(channels);
@@ -1020,7 +1061,7 @@ function finalizeMidi(channels){
   document.getElementById('sPpq').textContent=ppq;
   document.getElementById('sTempoChanges').textContent=tempoMap.length;
   document.getElementById('sCcCount').textContent=(ccCount||0).toLocaleString();
-  document.getElementById('sPitchRange').textContent=pitchLo+'–'+pitchHi;
+  document.getElementById('sPitchRange').textContent='0–127';
   document.getElementById('fileNotes').textContent=noteCount.toLocaleString()+' notes';
   document.getElementById('tTotal').textContent=fmtT(fileDuration);
   document.getElementById('midiStatsSection').style.display='block';
@@ -1051,21 +1092,23 @@ function _rebuildChLegend(channels){
     const chip=document.createElement('div');chip.className='ch-chip';
     chip.dataset.ch=ch;
     chip.style.cssText=`background:${col}22;border-color:${col}55;color:${col};cursor:pointer`;
-    chip.title='Clic para cambiar color del canal '+(ch+1);
+    chip.title='Click to change color for channel '+(ch+1);
     chip.innerHTML=`<span class="ch-dot" style="background:${col}"></span>Ch ${ch+1} <span style="font-size:.52rem;opacity:.5">🎨</span>`;
     chip.addEventListener('click',()=>{if(window._openChColorPicker)_openChColorPicker(ch,chip);});
     leg.appendChild(chip);
   });
 }
 
-/* ═══ MINI CHARTS — CC/s usa tiempos reales del archivo ═══ */
+/* ═══ MINI CHARTS ═══ */
 const _HIST_LEN=280;
 const _histNps=new Float32Array(_HIST_LEN);
 const _histPoly=new Float32Array(_HIST_LEN);
 const _histBpm=new Float32Array(_HIST_LEN);
 const _histCC=new Float32Array(_HIST_LEN);
+/* Skipped velocities history — mountain chart */
+const _histSkipped=new Float32Array(_HIST_LEN);
 let _histIdx=0,_histLast=0;
-const _HIST_RATE=1000/30; /* 30 muestras/s */
+const _HIST_RATE=1000/30;
 
 function _pushHistSample(t){
   if(!noteData)return;
@@ -1076,11 +1119,11 @@ function _pushHistSample(t){
   const poly=Math.max(0,upperBound(startArr,t)-lowerBound(endArr,t));
   let bpm=120;
   if(midiMeta)for(const e of midiMeta.secToTempoMap){if(e.sec>t)break;bpm=Math.round(e.bpm);}
-  /* CC/s real: usar tiempos reales del archivo en ventana t-1..t */
   const ccps=_fileCCTimes.length>0
     ? upperBound(_fileCCTimes,t) - lowerBound(_fileCCTimes,t-1.0)
     : 0;
   _histNps[_histIdx]=nps;_histPoly[_histIdx]=poly;_histBpm[_histIdx]=bpm;_histCC[_histIdx]=ccps;
+  _histSkipped[_histIdx]=_skippedThisFrame;
   _histIdx=(_histIdx+1)%_HIST_LEN;
 }
 
@@ -1122,6 +1165,7 @@ function _drawAllMiniCharts(){
   _drawMiniChart('chartPoly', _histPoly, '#38bdf8','chartPolyVal');
   _drawMiniChart('chartBpm',  _histBpm,  '#fb923c','chartBpmVal');
   _drawMiniChart('chartCC',   _histCC,   '#34d399','chartCCVal');
+  _drawMiniChart('chartSkipped',_histSkipped,'#fb7185','chartSkippedVal');
 }
 
 /* ═══ LIMITS CHART ═══ */
@@ -1170,10 +1214,57 @@ function drawLimitsChart(){
   }
 }
 
-/* ═══ MIDI SCHEDULER — corre en setInterval separado (5ms) ═══
-   Completamente desacoplado del RAF. Nunca bloquea el visualizador.
-   Los eventos MIDI van a la cola no-bloqueante _midiQueue.
+/* ═══ PERFORMANCE / FRAME-SKIP SYSTEM ═══
+   - Measures actual frame interval vs expected (60fps = ~16.67ms).
+   - If a frame is late (interval > 1.5x expected), it's marked as a dropped frame.
+   - When performance is poor, the scheduler skips note-on events with velocity 32–127
+     in order of priority: first skips vel 32–63, then 64–95, then 96–127 if still bad.
+   - As soon as a frame arrives on time, skipping is reduced/cleared.
+   - _skippedThisFrame: count of velocities skipped in the last sample window.
 */
+let _lastFrameTs=0;
+let _frameDropCount=0;       /* consecutive dropped frames */
+let _skipLevel=0;            /* 0=none, 1=skip vel<64, 2=skip vel<96, 3=skip vel<128 */
+let _skippedThisFrame=0;     /* for perf chart */
+const _FRAME_BUDGET=1000/50; /* 50fps minimum — above this we consider it on-time */
+const _DROP_THRESH=3;        /* consecutive drops before escalating skip level */
+const _RECOVER_THRESH=8;     /* consecutive good frames before reducing skip level */
+let _goodFrameCount=0;
+
+function _evalFramePerf(ts){
+  if(_lastFrameTs===0){_lastFrameTs=ts;return;}
+  const dt=ts-_lastFrameTs;
+  _lastFrameTs=ts;
+  if(dt>_FRAME_BUDGET*1.5){
+    /* Frame was late */
+    _frameDropCount++;
+    _goodFrameCount=0;
+    if(_frameDropCount>=_DROP_THRESH){
+      _skipLevel=Math.min(3,_skipLevel+1);
+      _frameDropCount=0;
+    }
+  }else{
+    /* Frame on time */
+    _goodFrameCount++;
+    _frameDropCount=0;
+    if(_goodFrameCount>=_RECOVER_THRESH){
+      _skipLevel=Math.max(0,_skipLevel-1);
+      _goodFrameCount=0;
+    }
+  }
+  _skippedThisFrame=0; /* reset per-frame counter; scheduler fills it */
+}
+
+/* Returns true if this note-on should be skipped given current skip level */
+function _shouldSkipVelocity(vel){
+  if(_skipLevel===0)return false;
+  if(_skipLevel===1&&vel<64)return true;
+  if(_skipLevel===2&&vel<96)return true;
+  if(_skipLevel===3)return true; /* skip everything — extreme case */
+  return false;
+}
+
+/* ═══ MIDI SCHEDULER — runs in setInterval (5ms), decoupled from RAF ═══ */
 const soundingNotes=new Map();
 let dispCursor=0;
 let _schedInterval=null;
@@ -1195,17 +1286,27 @@ function _runScheduler(){
   while(dispCursor<noteCount&&startArr[dispCursor]<horizon){
     const i=dispCursor*5;
     const s=noteData[i],p=noteData[i+2]|0,ch=noteData[i+3]|0;
-    /* Velocity original del archivo, mínimo 32 */
     const rawVel=Math.round(noteData[i+4]*127);
     const v=Math.max(32,Math.min(127,rawVel));
     const endSec=noteData[i+1];
+    const noteDur=endSec-s;
     const k=ch*128+p;
     const deltaMs=Math.max(0,(s-now)*1000);
+
+    /* Track longest exited note for post-buffer */
+    if(s<now-0.1){
+      _updatePostBuffer(noteDur);
+    }
+
     if(s>=now-0.05){
-      /* Encolar en vez de enviar directo — no bloquea el visualizador */
-      if(midiEnabled&&midiOutput)_enqueueMidi([0x90|ch,p,v],wallNow+deltaMs);
-      if(deltaMs<120){keyColors[p]=CH_CSS[ch%16];changed=true;}
-      soundingNotes.set(k,{endSec,ch,note:p,onMs:wallNow+deltaMs});
+      /* Frame-skip: skip note-on if performance is poor and velocity qualifies */
+      if(_shouldSkipVelocity(v)){
+        _skippedThisFrame++;
+      }else{
+        if(midiEnabled&&midiOutput)_enqueueMidi([0x90|ch,p,v],wallNow+deltaMs);
+        if(deltaMs<120){keyColors[p]=CH_CSS[ch%16];changed=true;}
+        soundingNotes.set(k,{endSec,ch,note:p,onMs:wallNow+deltaMs});
+      }
     }
     dispCursor++;
   }
@@ -1216,7 +1317,7 @@ function _runScheduler(){
   }
   if(!_achPolyFired&&_peakPolySec>0&&currentTime>=_peakPolySec){
     _achPolyFired=true;
-    showAchieve('poly','🎹','Peak Polyphony',_peakPoly.toLocaleString()+' notas','maximum simultaneous polyphony');
+    showAchieve('poly','🎹','Peak Polyphony',_peakPoly.toLocaleString()+' notes','maximum simultaneous polyphony');
   }
 
   soundingNotes.forEach((info,k)=>{
@@ -1256,7 +1357,7 @@ function updateCounters(t){
   if(dom)window._neuralHueTarget=dom.hue;
 }
 
-/* ═══ GL LOOP — FPS ILIMITADOS, sin throttle ═══ */
+/* ═══ GL LOOP — unlimited FPS, with frame-skip perf tracking ═══ */
 let isPlaying=false,startedAt=0,pausedAt=0,currentTime=0,rafId=null;
 const fmtT=s=>{const m=Math.floor(s/60);return`${m}:${Math.floor(s%60).toString().padStart(2,'0')}`};
 
@@ -1264,11 +1365,15 @@ let _glRafId=null;
 let _fpsFrames=0,_fpsLast=0;
 
 function _glLoop(ts){
-  /* Sin throttle — FPS ilimitados */
+  /* Evaluate frame performance for skip system */
+  _evalFramePerf(ts);
+
   _fpsFrames++;
   if(ts-_fpsLast>=500){
-    const fel=document.getElementById('liveFps');
-    if(fel)fel.textContent=Math.round(_fpsFrames*1000/(ts-_fpsLast||1));
+    const fps=Math.round(_fpsFrames*1000/(ts-_fpsLast||1));
+    /* FPS shown in visualizer overlay, not menu */
+    const fpsEl=document.getElementById('fpsOverlay');
+    if(fpsEl)fpsEl.textContent=fps+' FPS'+((_skipLevel>0)?' ⚠':'');
     _fpsFrames=0;_fpsLast=ts;
   }
   if(isPlaying)_tickCacheRefill(currentTime);
@@ -1293,12 +1398,7 @@ function _syncKeyVisuals(){
   markKeysDirty();
 }
 
-/* ═══ PLAYER LOOP — pausa exacta ═══
-   startedAt almacena el timestamp wall-clock del inicio del playback.
-   Al pausar: guardamos currentTime exacto en pausedAt.
-   Al reanudar: startedAt = performance.now() - pausedAt*1000
-   Esto garantiza que reanuda exactamente donde se pausó.
-*/
+/* ═══ PLAYER LOOP ═══ */
 function playerLoop(){
   currentTime=pausedAt+(performance.now()-startedAt)/1000;
   if(!noteData){if(isPlaying)rafId=requestAnimationFrame(playerLoop);return;}
@@ -1319,8 +1419,8 @@ function stopPlayback(){
   if(rafId){cancelAnimationFrame(rafId);rafId=null;}
   stopScheduler();_stopMidiFlushLoop();
   _midiAllOff();soundingNotes.clear();
-  /* Reset exacto de tiempo */
   pausedAt=0;startedAt=0;currentTime=0;dispCursor=0;
+  _skipLevel=0;_frameDropCount=0;_goodFrameCount=0;_skippedThisFrame=0;
   keyColors.fill(null);markKeysDirty();
   document.getElementById('progressFill').style.width='0%';
   document.getElementById('tElapsed').textContent='0:00';
@@ -1334,19 +1434,15 @@ function stopPlayback(){
 document.getElementById('btnPlay').addEventListener('click',()=>{
   if(!noteData||document.getElementById('btnPlay').disabled)return;
   if(isPlaying){
-    /* PAUSA — guardar segundo exacto */
     isPlaying=false;
     if(rafId){cancelAnimationFrame(rafId);rafId=null;}
-    /* pausedAt = tiempo exacto en que se pausó */
     pausedAt=currentTime;
     _midiAllOff();soundingNotes.clear();
     stopScheduler();
     document.getElementById('btnPlay').textContent='▶';
   }else{
-    /* REANUDAR o INICIAR */
     if(pausedAt===0&&currentTime===0)resetDispatch();
     isPlaying=true;
-    /* startedAt ajustado para que currentTime arranque exactamente desde pausedAt */
     startedAt=performance.now()-pausedAt*1000;
     document.getElementById('btnPlay').textContent='⏸';
     startScheduler();
@@ -1363,14 +1459,19 @@ function loadMidiFile(file){
   stopPlayback();
   stopGLLoop();
   if(window._midiInReset)window._midiInReset();
-  totalVboNotes=0;pitchLo=127;pitchHi=0;
+  totalVboNotes=0;pitchLo=PIANO_LO;pitchHi=PIANO_HI;
   noteData=null;noteCount=0;startArr=null;endArr=null;
   fileDuration=0;midiMeta=null;rawBufs=[];rawTotal=0;dispCursor=0;
   _fileCCTimes=[];
   _cacheStart=0;_cacheEnd=0;
   _limitsData=null;_achNpsFired=false;_achPolyFired=false;
   _peakNps=0;_peakNpsSec=0;_peakPoly=0;_peakPolySec=0;
-  _histIdx=0;_histNps.fill(0);_histPoly.fill(0);_histBpm.fill(0);_histCC.fill(0);
+  _histIdx=0;_histNps.fill(0);_histPoly.fill(0);_histBpm.fill(0);_histCC.fill(0);_histSkipped.fill(0);
+  /* Reset perf state */
+  _skipLevel=0;_frameDropCount=0;_goodFrameCount=0;_skippedThisFrame=0;_lastFrameTs=0;
+  /* Reset post-buffer */
+  _longestExitedNote=0;POST_BUFFER=0;
+  document.getElementById('postBufVal').textContent='0.0s';
   document.getElementById('achieveContainer').innerHTML='';
   if(wglOk){
     gl.bindBuffer(gl.ARRAY_BUFFER,iVBO);
@@ -1433,8 +1534,11 @@ document.getElementById('btnClear').addEventListener('click',()=>{
   _cacheStart=0;_cacheEnd=0;
   _limitsData=null;_achNpsFired=false;_achPolyFired=false;
   _peakNps=0;_peakNpsSec=0;_peakPoly=0;_peakPolySec=0;
-  _histIdx=0;_histNps.fill(0);_histPoly.fill(0);_histBpm.fill(0);_histCC.fill(0);
-  totalVboNotes=0;pitchLo=127;pitchHi=0;
+  _histIdx=0;_histNps.fill(0);_histPoly.fill(0);_histBpm.fill(0);_histCC.fill(0);_histSkipped.fill(0);
+  _skipLevel=0;_frameDropCount=0;_goodFrameCount=0;_skippedThisFrame=0;_lastFrameTs=0;
+  _longestExitedNote=0;POST_BUFFER=0;
+  document.getElementById('postBufVal').textContent='0.0s';
+  totalVboNotes=0;pitchLo=PIANO_LO;pitchHi=PIANO_HI;
   document.getElementById('fileBar').classList.remove('on');
   document.getElementById('midiStatsSection').style.display='none';
   document.getElementById('limitsChartSection').style.display='none';
@@ -1446,12 +1550,13 @@ document.getElementById('btnClear').addEventListener('click',()=>{
   document.getElementById('rollInfo').textContent='';
   document.getElementById('liveNotes').textContent='0';
   document.getElementById('liveNps').textContent='0';
+  const fpsEl=document.getElementById('fpsOverlay');if(fpsEl)fpsEl.textContent='0 FPS';
   if(wglOk)gl.clear(gl.COLOR_BUFFER_BIT);
   hideParseBar();
   startGLLoop();
 });
 
-/* ═══ ATAJOS DE TECLADO ═══ */
+/* ═══ KEYBOARD SHORTCUTS ═══ */
 document.addEventListener('keydown',e=>{
   const tag=document.activeElement?.tagName;
   if(tag==='INPUT'||tag==='SELECT'||tag==='TEXTAREA')return;
@@ -1486,14 +1591,14 @@ resizeRoll();resizeKeys();startGLLoop();
 </script>
 
 <!-- ═══════════════════════════════════════════════════
-     COLOR PICKER PORTAL (arcoíris)
+     COLOR PICKER PORTAL (rainbow)
 ════════════════════════════════════════════════════ -->
 <div id="chColorPickerPortal" style="display:none;position:fixed;z-index:99999;background:rgba(10,8,32,.97);border:1px solid rgba(167,139,250,.35);border-radius:14px;padding:12px 14px;box-shadow:0 8px 40px rgba(0,0,0,.75);flex-direction:column;gap:9px;min-width:225px">
-  <div style="font-size:.62rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:rgba(196,181,253,.4)">Canal <span id="cpChNum2"></span> · Color</div>
+  <div style="font-size:.62rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:rgba(196,181,253,.4)">Channel <span id="cpChNum2"></span> · Color</div>
   <canvas id="cpRainbow" width="200" height="30" style="border-radius:6px;cursor:crosshair;width:100%;display:block"></canvas>
   <div style="display:flex;align-items:center;gap:7px">
     <input type="color" id="cpNativeInput" style="width:34px;height:28px;border:1px solid rgba(167,139,250,.25);border-radius:5px;background:none;padding:0;cursor:pointer;flex-shrink:0">
-    <span style="font-size:.58rem;color:rgba(196,181,253,.35)">o elige del arcoíris ↑</span>
+    <span style="font-size:.58rem;color:rgba(196,181,253,.35)">or pick from rainbow ↑</span>
   </div>
   <div id="cpDefaultSwatches" style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px"></div>
   <button id="cpCloseBtn" style="font-size:.66rem;padding:.2rem .65rem;border-radius:6px;border:1px solid rgba(167,139,250,.22);background:rgba(99,63,210,.14);color:#a78bfa;cursor:pointer;align-self:flex-end">✕ Close</button>
@@ -1681,8 +1786,9 @@ resizeRoll();resizeKeys();startGLLoop();
     ctx.clearRect(0,0,W,H);
     if(!liveNotes.size&&!finishedNotes.length)return;
     const now=performance.now()/1000;
-    const plo=Math.max(0,pitchLo-2),phi=Math.min(127,pitchHi+2)+1;
-    const pRange=phi-plo||128;
+    /* Fixed piano range — always 128 semitones */
+    const plo=0,phi=128;
+    const pRange=phi-plo;
     const tRange=WINDOW;
     const cutoff=now-WINDOW;
     while(finishedNotes.length&&finishedNotes[0].endT<cutoff)finishedNotes.shift();
