@@ -164,35 +164,38 @@ footer a:hover{color:#a78bfa}
 </div>
 
 <nav>
-  <div class="nav-inner">
-    <a href="index.html" class="nav-logo">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-        <polygon points="12,2 22,8 22,16 12,22 2,16 2,8" stroke="#a78bfa" stroke-width="1.8" fill="rgba(99,63,210,0.15)"/>
-        <circle cx="12" cy="12" r="3" fill="#a78bfa" opacity="0.9"/>
-        <line x1="12" y1="2" x2="12" y2="9" stroke="#a78bfa" stroke-width="1.2" opacity="0.6"/>
-        <line x1="22" y1="8" x2="15.5" y2="10.5" stroke="#a78bfa" stroke-width="1.2" opacity="0.6"/>
-        <line x1="22" y1="16" x2="15.5" y2="13.5" stroke="#a78bfa" stroke-width="1.2" opacity="0.6"/>
-        <line x1="12" y1="22" x2="12" y2="15" stroke="#a78bfa" stroke-width="1.2" opacity="0.6"/>
-        <line x1="2" y1="16" x2="8.5" y2="13.5" stroke="#a78bfa" stroke-width="1.2" opacity="0.6"/>
-        <line x1="2" y1="8" x2="8.5" y2="10.5" stroke="#a78bfa" stroke-width="1.2" opacity="0.6"/>
-      </svg>
-      Dekxtopia
-    </a>
-    <button class="mob-hamburger" id="mobBtn" aria-label="Menu" aria-expanded="false">
-      <span></span><span></span><span></span>
-    </button>
-    <ul class="nav-links">
+    <div class="nav-inner">
+      <a href="index.html" class="nav-logo">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-label="Dekxtopia logo">
+          <polygon points="12,2 22,8 22,16 12,22 2,16 2,8" stroke="#a78bfa" stroke-width="1.8" fill="rgba(99,63,210,0.15)"></polygon>
+          <circle cx="12" cy="12" r="3" fill="#a78bfa" opacity="0.9"></circle>
+          <line x1="12" y1="2" x2="12" y2="9" stroke="#a78bfa" stroke-width="1.2" opacity="0.6"></line>
+          <line x1="22" y1="8" x2="15.5" y2="10.5" stroke="#a78bfa" stroke-width="1.2" opacity="0.6"></line>
+          <line x1="22" y1="16" x2="15.5" y2="13.5" stroke="#a78bfa" stroke-width="1.2" opacity="0.6"></line>
+          <line x1="12" y1="22" x2="12" y2="15" stroke="#a78bfa" stroke-width="1.2" opacity="0.6"></line>
+          <line x1="2" y1="16" x2="8.5" y2="13.5" stroke="#a78bfa" stroke-width="1.2" opacity="0.6"></line>
+          <line x1="2" y1="8" x2="8.5" y2="10.5" stroke="#a78bfa" stroke-width="1.2" opacity="0.6"></line>
+        </svg>
+        Dekxtopia
+      </a>
+      <button class="mob-hamburger" id="mobBtn" aria-label="Open menu" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+      <ul class="nav-links">
+        <li><a href="index.html">Home</a></li>
+        <li><a href="MPWGL2.html" class="active">MIDI Player WebGL2 <span class="nav-badge">New</span></a></li>
+      </ul>
+    </div>
+  </nav>
+  <div id="mob-menu" role="dialog" aria-modal="true">
+    <button class="mob-close" id="mobClose" aria-label="Close menu">✕</button>
+    <ul>
       <li><a href="index.html">Home</a></li>
-      <li><a href="#" class="active">MIDI Player</a></li>
+      <li><a href="MPWGL2.html" class="active">MIDI Player WebGL2 <span class="nav-badge">New</span></a></li>
     </ul>
   </div>
-</nav>
-<div id="mob-menu" role="dialog" aria-modal="true">
-  <button class="mob-close" id="mobClose">✕</button>
-  <ul><li><a href="index.html">← Home</a></li><li><a href="#">MIDI Player</a></li></ul>
-</div>
 
-<div class="page-wrapper">
+  <div class="page-wrapper">
 <div class="left-col"><div class="left-scroll glass">
 
   <section class="hero" style="padding:.2rem 0 .08rem">
@@ -2208,7 +2211,43 @@ startGLLoop();
   window._midiInDrawHook=drawMidiIn;
   _tryAutoRequestMidiIn();
 })();
-</script>
+
+    const menuBtn = document.getElementById('mobBtn');
+    const mobileMenu = document.getElementById('mob-menu');
+    const mobileClose = document.getElementById('mobClose');
+
+    function closeMobileMenu() {
+      if (!menuBtn || !mobileMenu) return;
+      menuBtn.classList.remove('open');
+      mobileMenu.classList.remove('open');
+      menuBtn.setAttribute('aria-expanded', 'false');
+      document.body.style.overflow = '';
+    }
+
+    if (menuBtn && mobileMenu) {
+      menuBtn.addEventListener('click', () => {
+        const isOpen = mobileMenu.classList.toggle('open');
+        menuBtn.classList.toggle('open', isOpen);
+        menuBtn.setAttribute('aria-expanded', String(isOpen));
+        document.body.style.overflow = isOpen ? 'hidden' : '';
+      });
+    }
+
+    if (mobileClose) {
+      mobileClose.addEventListener('click', closeMobileMenu);
+    }
+
+    if (mobileMenu) {
+      mobileMenu.querySelectorAll('a').forEach((link) => {
+        link.addEventListener('click', closeMobileMenu);
+      });
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeMobileMenu();
+    });
+
+  </script>
 
 </body>
 </html>
