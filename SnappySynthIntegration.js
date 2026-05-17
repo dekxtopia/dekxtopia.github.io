@@ -1,29 +1,30 @@
 /**
- * SnappySynthIntegration.js
- * Drop this as a <script src="SnappySynthIntegration.js"></script>
- * at the END of MPWGL2.html body, AFTER the existing <script> block.
+ * SnappySynthIntegration.js  —  Pre-render buffer edition
  *
- * What it does automatically:
- *  1. Injects CSS for the Embedded Synth panel
- *  2. Injects the "Embedded Synth (New)" tab button into .midi-out-tabs
- *  3. Injects the full settings panel HTML into .midi-out-section
- *  4. Overrides _enqueueMidi() (the real MIDI dispatch in MPWGL2.html)
- *     to redirect MIDI to SnappySynthDriver when Embedded Synth tab is active.
- *  5. Hooks the existing tab buttons (tabWmidi, tabMidiIn, tabNone) so
- *     switching away from snappy triggers panic().
+ * Architecture:
+ *  - snappy-render  AudioWorkletNode: SF2 voice engine, fills SharedArrayBuffer
+ *  - snappy-player  AudioWorkletNode: drains SAB to DAC, connected to destination
+ *  - Main thread owns: SAB, MIDI scheduling, play/pause/seek signalling
  *
- * Soundfont loading supports:
- *  - Local file upload via <input type="file"> (no CORS, no server needed)
- *  - Remote URL as fallback
+ * SAB control layout (Int32, at end of buffer):
+ *   [0] writePos   (frames, set by render node)
+ *   [1] readPos    (frames, set by player node)
+ *   [2] playing    (0=paused, 1=playing)
+ *   [3] skipping   (current velocity skip threshold, set by render node)
  *
- * MIDI DWORD format (mirrors snappysynth.c SendDirectData):
- *   dword = (status & 0xFF) | ((data1 & 0xFF) << 8) | ((data2 & 0xFF) << 16)
+ * Buffer size is configurable (default 6 s).  The render node fills up to
+ * bufferSec ahead even while paused.  The player node outputs silence when
+ * paused or when the buffer is starved.
+ *
+ * When the buffer runs low the render node raises the velocity skip threshold
+ * exactly as Kiva does:  skip = clamp(127 + 10 - bufferedSamples/100, 0, 127)
+ * Low-velocity notes (≤ skip) are dropped by the render node until recovery.
  */
 
 (function () {
   'use strict';
 
-  // ── 1. Inject CSS ─────────────────────────────────────────────────────────
+  // ── 1. CSS ────────────────────────────────────────────────────────────────
   const style = document.createElement('style');
   style.textContent = `
     .ss-badge{display:inline-block;font-size:.55rem;font-weight:700;letter-spacing:.05em;
@@ -51,23 +52,23 @@
       font-size:.62rem;color:rgba(196,181,253,.6);}
     .ss-toggle input[type=checkbox]{accent-color:#a78bfa;width:13px;height:13px;cursor:pointer;}
     #ssVoiceCount{font-size:.62rem;color:#34d399;font-variant-numeric:tabular-nums;}
-
-    /* SF2 upload drop zone */
-    #ssSFDropZone{
-      border:1.5px dashed rgba(167,139,250,.3);border-radius:8px;
+    #ssBufBar{width:100%;height:4px;background:rgba(167,139,250,.1);border-radius:999px;overflow:hidden;margin-top:.15rem;}
+    #ssBufFill{height:100%;background:linear-gradient(90deg,#fb7185,#fbbf24,#34d399);border-radius:999px;transition:width 200ms linear;}
+    #ssSkipBadge{font-size:.58rem;padding:.1rem .35rem;border-radius:4px;
+      background:rgba(251,113,133,.1);border:1px solid rgba(251,113,133,.25);color:#fb7185;
+      display:none;margin-left:.35rem;}
+    #ssSkipBadge.on{display:inline-block;}
+    /* greyed-out tabs when embedded synth is active */
+    .ss-tab-disabled{opacity:.35!important;pointer-events:none!important;}
+    #ssSFDropZone{border:1.5px dashed rgba(167,139,250,.3);border-radius:8px;
       padding:.55rem .7rem;cursor:pointer;transition:border-color .15s,background .15s;
-      display:flex;align-items:center;gap:.55rem;min-height:38px;
-    }
-    #ssSFDropZone:hover,#ssSFDropZone.dragover{
-      border-color:#a78bfa;background:rgba(167,139,250,.07);
-    }
+      display:flex;align-items:center;gap:.55rem;min-height:38px;}
+    #ssSFDropZone:hover,#ssSFDropZone.dragover{border-color:#a78bfa;background:rgba(167,139,250,.07);}
     #ssSFDropZone .dz-icon{font-size:1.1rem;line-height:1;flex-shrink:0;}
     #ssSFDropZone .dz-label{font-size:.62rem;color:rgba(196,181,253,.55);line-height:1.45;}
     #ssSFDropZone .dz-label strong{color:#c4b5fd;}
     #ssSFDropZone.has-file .dz-label{color:#34d399;}
     #ssSFDropZone.has-file{border-color:rgba(52,211,153,.35);}
-
-    /* URL row (collapsed by default, toggle link) */
     #ssSFUrlRow{display:none;margin-top:.2rem;}
     #ssSFUrlRow.visible{display:flex;}
     #ssUrlToggle{font-size:.58rem;color:rgba(167,139,250,.45);cursor:pointer;
@@ -77,7 +78,7 @@
   `;
   document.head.appendChild(style);
 
-  // ── 2. Inject Tab Button ──────────────────────────────────────────────────
+  // ── 2. Tab button ─────────────────────────────────────────────────────────
   const tabsContainer = document.querySelector('.midi-out-tabs');
   if (tabsContainer) {
     const btn = document.createElement('button');
@@ -88,7 +89,7 @@
     tabsContainer.appendChild(btn);
   }
 
-  // ── 3. Inject Panel HTML ──────────────────────────────────────────────────
+  // ── 3. Panel HTML ─────────────────────────────────────────────────────────
   const outSection = document.querySelector('.midi-out-section');
   if (outSection) {
     const panel = document.createElement('div');
@@ -103,14 +104,9 @@
         </span>
       </div>
 
-      <!-- Soundfont loader -->
       <div class="ss-section-label">Soundfont (.sf2)</div>
-
-      <!-- Hidden real file input -->
       <input type="file" id="ssSFFileInput" accept=".sf2,audio/x-sf2"
         style="display:none" onchange="ssSFFileChosen(this)">
-
-      <!-- Drop zone / click-to-browse -->
       <div id="ssSFDropZone"
         onclick="document.getElementById('ssSFFileInput').click()"
         ondragover="event.preventDefault();this.classList.add('dragover')"
@@ -121,18 +117,31 @@
           <strong>Click to browse</strong> or drag &amp; drop an .sf2 file here
         </span>
       </div>
-
-      <!-- Optional URL fallback -->
       <span id="ssUrlToggle" onclick="ssToggleUrlRow()">or load from URL instead</span>
       <div class="ss-row" id="ssSFUrlRow">
         <input class="ss-ctrl" id="ssSFUrl" type="url"
           placeholder="https://example.com/soundfont.sf2" spellcheck="false">
         <button class="btn-md" onclick="ssLoadSFUrl()">Load</button>
       </div>
-
       <div class="ss-row" style="margin-top:.3rem">
         <span class="ss-status idle" id="ssSFStatus">Not loaded</span>
         <span id="ssSFRegions" style="font-size:.58rem;color:rgba(196,181,253,.3)"></span>
+        <span id="ssSkipBadge">skip</span>
+      </div>
+
+      <!-- Buffer meter -->
+      <div class="ss-section-label">Pre-render Buffer</div>
+      <div class="ss-row">
+        <span class="ss-label">Size (s)</span>
+        <input class="ss-slider" type="range" min="1" max="30" step="1" value="6"
+          oninput="ssUpdateSetting('bufferSec',+this.value);document.getElementById('ssBufSecVal').textContent=this.value">
+        <span class="ss-val" id="ssBufSecVal">6</span>
+      </div>
+      <div class="ss-row" style="flex-direction:column;align-items:flex-start;gap:.18rem">
+        <div style="display:flex;justify-content:space-between;width:100%;font-size:.58rem;color:rgba(196,181,253,.3)">
+          <span>Buffered</span><span id="ssBufSecCur">0.0 s</span>
+        </div>
+        <div id="ssBufBar"><div id="ssBufFill" style="width:0%"></div></div>
       </div>
 
       <!-- Voice engine -->
@@ -158,18 +167,6 @@
       <div class="ss-row">
         <span class="ss-label">Active Voices</span>
         <span id="ssVoiceCount">—</span>
-      </div>
-
-      <!-- Buffer -->
-      <div class="ss-section-label">Buffer</div>
-      <div class="ss-row">
-        <span class="ss-label">Buffer Frames</span>
-        <select class="ss-ctrl ss-ctrl-sm" onchange="ssUpdateSetting('bufferFrames',+this.value)">
-          <option value="128">128</option>
-          <option value="256" selected>256</option>
-          <option value="512">512</option>
-          <option value="1024">1024</option>
-        </select>
       </div>
 
       <!-- Limiter -->
@@ -203,115 +200,119 @@
     outSection.appendChild(panel);
   }
 
-  // ── 4. Tab activation helpers ─────────────────────────────────────────────
-  // These use the same CSS classes as _setMidiTab() in MPWGL2.html so the
-  // UI stays consistent without needing to touch the original code.
+  // ── 4. Tab activation / deactivation ─────────────────────────────────────
 
   function _ssActivateTab() {
-    // Deactivate all existing tabs + panels using the same pattern as MPWGL2
+    // Deactivate original tabs + panels
     ['tabWmidi','tabMidiIn','tabNone'].forEach(id => {
       const el = document.getElementById(id);
-      if (el) el.classList.remove('active');
+      if (el) { el.classList.remove('active'); el.classList.add('ss-tab-disabled'); }
     });
     ['panelWmidi','panelMidiIn','panelNone'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.classList.remove('on');
     });
-    // Activate our tab + panel
     document.getElementById('tabSnappy')?.classList.add('active');
     document.getElementById('snappyPanel')?.classList.add('on');
-    // Mute hardware MIDI output while embedded synth is active
-    // (midiEnabled is a var in the page scope — set via window)
+    // Disable hardware MIDI output
     if (typeof midiEnabled !== 'undefined') window.midiEnabled = false;
-    // Init worklet lazily on first activation
-    if (!ssBridge.isActive()) ssBridge.init();
+    // Boot the worklets if not yet running
+    ssBridge.init();
   }
 
-  // When the user clicks any of the original tabs, deactivate snappy
+  function _ssDeactivateTab() {
+    ['tabWmidi','tabMidiIn','tabNone'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) { el.classList.remove('ss-tab-disabled'); }
+    });
+    document.getElementById('tabSnappy')?.classList.remove('active');
+    document.getElementById('snappyPanel')?.classList.remove('on');
+    ssBridge.pause();
+    ssBridge.panic();
+  }
+
+  // Hook original tab buttons (capture phase so we run before their listener)
   ['tabWmidi','tabMidiIn','tabNone'].forEach(id => {
     const btn = document.getElementById(id);
     if (!btn) return;
     btn.addEventListener('click', () => {
-      document.getElementById('tabSnappy')?.classList.remove('active');
-      document.getElementById('snappyPanel')?.classList.remove('on');
-      ssBridge.panic();
-      // Restore midiEnabled for the hardware tabs (tabNone sets it false itself)
-      if (id !== 'tabNone' && typeof midiEnabled !== 'undefined') {
-        window.midiEnabled = true;
-      }
-    }, true); // capture phase so we run before the existing listener
+      _ssDeactivateTab();
+      if (id !== 'tabNone' && typeof midiEnabled !== 'undefined') window.midiEnabled = true;
+    }, true);
   });
 
-  // ── 5. Intercept _enqueueMidi (the REAL dispatch in MPWGL2.html) ──────────
-  //
-  // MPWGL2.html's scheduler calls _enqueueMidi(data, timestampMs) for every
-  // note-on / note-off / CC.  We replace that function with our own wrapper
-  // which redirects to the AudioWorklet when our tab is active.
-  //
-  // We wait for the page's own script to finish (it's in the same <script>
-  // tag before us, so by the time this module runs _enqueueMidi is defined).
-
+  // ── 5. Intercept _enqueueMidi (real MIDI dispatch in MPWGL2.html) ─────────
   const _origEnqueue = window._enqueueMidi;
   window._enqueueMidi = function (data, timestampMs) {
     const snappyActive = document.getElementById('tabSnappy')?.classList.contains('active');
     if (snappyActive) {
-      // Convert byte array [status, d1, d2] to packed DWORD
       const status = data[0] & 0xFF;
       const d1     = (data[1] || 0) & 0xFF;
       const d2     = (data[2] || 0) & 0xFF;
       ssBridge.sendDword(status | (d1 << 8) | (d2 << 16));
       return;
     }
-    // Otherwise fall through to the original (hardware MIDI out)
     if (typeof _origEnqueue === 'function') _origEnqueue(data, timestampMs);
   };
 
-  // ── 6. Global UI helpers ──────────────────────────────────────────────────
-
-  /** Called when user picks a file via the file input */
-  window.ssSFFileChosen = function (input) {
-    const file = input.files && input.files[0];
-    if (!file) return;
-    _readAndLoadFile(file);
+  // Intercept play / pause from the page transport so we can signal the player
+  // MPWGL2.html calls _setPlaying(bool) — wrap it.
+  const _origSetPlaying = window._setPlaying;
+  window._setPlaying = function (playing) {
+    const snappyActive = document.getElementById('tabSnappy')?.classList.contains('active');
+    if (snappyActive) {
+      if (playing) ssBridge.play(); else ssBridge.pause();
+    }
+    if (typeof _origSetPlaying === 'function') _origSetPlaying(playing);
   };
 
-  /** Called when user drops a file onto the drop zone */
+  // ── 6. SF loading UI helpers ──────────────────────────────────────────────
+
+  window.ssSFFileChosen = function (input) {
+    const file = input.files && input.files[0];
+    if (file) _readAndLoadFile(file);
+  };
+
   window.ssSFDropped = function (event) {
     event.preventDefault();
-    const dz = document.getElementById('ssSFDropZone');
-    if (dz) dz.classList.remove('dragover');
+    document.getElementById('ssSFDropZone')?.classList.remove('dragover');
     const file = event.dataTransfer?.files?.[0];
     if (!file) return;
-    if (!file.name.toLowerCase().endsWith('.sf2')) {
-      _sfSetStatus('Not an .sf2 file', 'err');
-      return;
-    }
+    if (!file.name.toLowerCase().endsWith('.sf2')) { _sfSetStatus('Not an .sf2 file', 'err'); return; }
     _readAndLoadFile(file);
   };
 
   function _readAndLoadFile(file) {
     _sfSetStatus('Reading ' + file.name + '\u2026', 'loading');
     const label = document.getElementById('ssSFDropLabel');
-    if (label) label.innerHTML = '<strong>' + _escHtml(file.name) + '</strong> (' + _fmtSize(file.size) + ')';
-    const dz = document.getElementById('ssSFDropZone');
-    if (dz) dz.classList.add('has-file');
-
+    if (label) label.innerHTML = '<strong>' + _esc(file.name) + '</strong> (' + _sz(file.size) + ')';
+    document.getElementById('ssSFDropZone')?.classList.add('has-file');
     const reader = new FileReader();
-    reader.onload = function (e) {
-      // Make sure the worklet is running before we send the buffer
-      if (!ssBridge.isActive()) {
-        ssBridge.init().then(() => {
-          ssBridge.loadSFBuffer(e.target.result, file.name);
-        });
-      } else {
-        ssBridge.loadSFBuffer(e.target.result, file.name);
-      }
+    reader.onload = e => {
+      ssBridge.init().then(() => ssBridge.loadSFBuffer(e.target.result, file.name));
     };
-    reader.onerror = function () {
-      _sfSetStatus('File read error', 'err');
-    };
+    reader.onerror = () => _sfSetStatus('File read error', 'err');
     reader.readAsArrayBuffer(file);
   }
+
+  window.ssLoadSFUrl = function () {
+    const url = document.getElementById('ssSFUrl')?.value.trim();
+    if (!url) { typeof showToast === 'function' && showToast('Enter a .sf2 URL first'); return; }
+    _sfSetStatus('Connecting\u2026', 'loading');
+    ssBridge.init().then(() => ssBridge.loadSF(url));
+  };
+
+  window.ssToggleUrlRow = function () {
+    const row = document.getElementById('ssSFUrlRow'), t = document.getElementById('ssUrlToggle');
+    if (!row) return;
+    const v = row.classList.toggle('visible');
+    if (t) t.textContent = v ? 'hide URL input' : 'or load from URL instead';
+  };
+
+  window.ssUpdateSetting = function (key, value) {
+    if (key === 'bufferSec') { ssBridge.resizeBuffer(value); return; }
+    ssBridge.updateSetting(key, value);
+  };
 
   function _sfSetStatus(text, cls) {
     const el = document.getElementById('ssSFStatus');
@@ -319,172 +320,211 @@
     el.textContent = text;
     el.className = 'ss-status ' + (cls || 'idle');
   }
-
-  function _escHtml(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-
-  function _fmtSize(bytes) {
-    if (bytes < 1024)       return bytes + ' B';
-    if (bytes < 1048576)    return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / 1048576).toFixed(1) + ' MB';
-  }
-
-  /** Load SF2 from a URL (fallback row) */
-  window.ssLoadSFUrl = function () {
-    const url = document.getElementById('ssSFUrl')?.value.trim();
-    if (!url) { typeof showToast === 'function' && showToast('Enter a .sf2 URL first'); return; }
-    _sfSetStatus('Connecting\u2026', 'loading');
-    ssBridge.loadSF(url);
-  };
-
-  /** Toggle URL fallback row */
-  window.ssToggleUrlRow = function () {
-    const row    = document.getElementById('ssSFUrlRow');
-    const toggle = document.getElementById('ssUrlToggle');
-    if (!row) return;
-    const visible = row.classList.toggle('visible');
-    if (toggle) toggle.textContent = visible ? 'hide URL input' : 'or load from URL instead';
-  };
-
-  window.ssUpdateSetting = function (key, value) {
-    ssBridge.updateSetting(key, value);
-  };
+  function _esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function _sz(b)  { return b < 1048576 ? (b/1024).toFixed(1)+' KB' : (b/1048576).toFixed(1)+' MB'; }
 
 })();
 
+
 // ═══════════════════════════════════════════════════════════════════════════
-// SnappySynth Bridge
-// Mirrors the C API surface from snappysynth.c:
-//   InitializeKDMAPIStream  → ssBridge.init()
-//   SendDirectData(DWORD)   → ssBridge.sendDword(dword)
-//   SendMIDIDataBatch       → ssBridge.sendBatch(dwords[])
-//   TerminateKDMAPIStream   → ssBridge.dispose()
-//   ResetKDMAPIStream       → ssBridge.panic()
+//  SnappySynth Bridge
+//  Owns the SharedArrayBuffer, both worklet nodes, and all signalling.
 // ═══════════════════════════════════════════════════════════════════════════
 const ssBridge = (function () {
-  let audioCtx = null;
-  let worklet  = null;
-  let gainNode = null;
+  let audioCtx    = null;
+  let renderNode  = null;   // snappy-render
+  let playerNode  = null;   // snappy-player
+  let sab         = null;   // SharedArrayBuffer
+  let ctrl        = null;   // Int32Array view of SAB control block
+  let ringFrames  = 0;      // ring size in frames
+  let bufferSec   = 6;      // configurable buffer duration
+  let _initPromise = null;
 
   const _settings = {
-    soundfontUrl:     '',
-    numVoices:        512,
-    numLayers:        4,
-    velThresh:        0,
-    bufferFrames:     256,
-    limiterEnabled:   true,
-    limiterThreshold: 0.95,
-    limiterAttack:    0.003,
-    limiterRelease:   0.25,
-    masterVol:        1.0,
+    numVoices: 512, numLayers: 4, velThresh: 0,
+    limiterEnabled: true, limiterThreshold: 0.95,
+    limiterAttack: 0.003, limiterRelease: 0.25,
+    masterVol: 1.0,
   };
 
-  function _setStatus(text, cls) {
-    const el = document.getElementById('ssSFStatus');
-    if (!el) return;
-    el.textContent = text;
-    el.className = 'ss-status ' + (cls || 'idle');
+  // ctrl indices
+  const W = 0, R = 1, PLAY = 2, SKIP = 3;
+
+  function _makeSAB(sec, sr) {
+    // Layout: [ringL float32 × N] [ringR float32 × N] [ctrl int32 × 4]
+    const frames     = sr * sec;
+    const ringBytes  = frames * 4;         // float32
+    const ctrlBytes  = 16;                 // 4 × int32
+    const totalBytes = ringBytes * 2 + ctrlBytes;
+    const buf   = new SharedArrayBuffer(totalBytes);
+    const c     = new Int32Array(buf, ringBytes * 2, 4);
+    Atomics.store(c, W,    0);
+    Atomics.store(c, R,    0);
+    Atomics.store(c, PLAY, 0);
+    Atomics.store(c, SKIP, 0);
+    return { buf, frames };
   }
 
+  function _sfSetStatus(text, cls) {
+    const el = document.getElementById('ssSFStatus');
+    if (!el) return;
+    el.textContent  = text;
+    el.className    = 'ss-status ' + (cls || 'idle');
+  }
+
+  // Start the stats refresh loop (runs while bridge is active)
+  let _statsRaf = null;
+  function _startStatsLoop() {
+    if (_statsRaf) return;
+    function tick() {
+      if (!ctrl) { _statsRaf = null; return; }
+      const writePos  = Atomics.load(ctrl, W);
+      const readPos   = Atomics.load(ctrl, R);
+      const skip      = Atomics.load(ctrl, SKIP);
+      const buffered  = Math.max(0, writePos - readPos);
+      const sr        = audioCtx ? audioCtx.sampleRate : 48000;
+      const bufSec    = buffered / sr;
+      const pct       = Math.min(100, (bufSec / bufferSec) * 100);
+
+      const fill = document.getElementById('ssBufFill');
+      const cur  = document.getElementById('ssBufSecCur');
+      const badge = document.getElementById('ssSkipBadge');
+      if (fill)  fill.style.width  = pct.toFixed(1) + '%';
+      if (cur)   cur.textContent   = bufSec.toFixed(1) + ' s';
+      if (badge) { badge.textContent = 'skip >' + skip; badge.classList.toggle('on', skip > 0); }
+
+      _statsRaf = requestAnimationFrame(tick);
+    }
+    _statsRaf = requestAnimationFrame(tick);
+  }
+
+  // ── init ──────────────────────────────────────────────────────────────────
   async function init() {
-    if (worklet) return;
+    if (_initPromise) return _initPromise;
+    _initPromise = _doInit();
+    return _initPromise;
+  }
+
+  async function _doInit() {
     try {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       await audioCtx.audioWorklet.addModule('SnappySynthDriver.js');
-      worklet = new AudioWorkletNode(audioCtx, 'snappy-synth', {
-        numberOfInputs:     0,
-        numberOfOutputs:    1,
-        outputChannelCount: [2],
-      });
-      gainNode = audioCtx.createGain();
-      gainNode.gain.value = 1.0;
-      worklet.connect(gainNode);
-      gainNode.connect(audioCtx.destination);
 
-      worklet.port.onmessage = ({ data: d }) => {
-        if (d.type === 'sf_loading') {
-          _setStatus('Parsing\u2026', 'loading');
-        } else if (d.type === 'sf_loaded') {
-          _setStatus('Loaded \u2714', 'ok');
+      const sr = audioCtx.sampleRate;
+      const { buf, frames } = _makeSAB(bufferSec, sr);
+      sab        = buf;
+      ringFrames = frames;
+      const ringBytes = frames * 4;
+      ctrl = new Int32Array(sab, ringBytes * 2, 4);
+
+      // Render node — no audio output connected; runs in background
+      renderNode = new AudioWorkletNode(audioCtx, 'snappy-render', {
+        numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2],
+      });
+      renderNode.port.onmessage = ({ data: d }) => {
+        if      (d.type === 'sf_loading') _sfSetStatus('Parsing\u2026', 'loading');
+        else if (d.type === 'sf_loaded')  {
+          _sfSetStatus('Loaded \u2714', 'ok');
           const r = document.getElementById('ssSFRegions');
           if (r) r.textContent = d.regionCount + ' regions';
-        } else if (d.type === 'sf_error') {
-          _setStatus('Error: ' + d.message, 'err');
-        } else if (d.type === 'stats') {
+        }
+        else if (d.type === 'sf_error')   _sfSetStatus('Error: ' + d.message, 'err');
+        else if (d.type === 'stats') {
           const el = document.getElementById('ssVoiceCount');
           if (el) el.textContent = d.activeVoices;
         }
       };
+      // Send SAB to render node
+      renderNode.port.postMessage({ type: 'init', sab, settings: { ..._settings } });
+      // Connect to a muted gain so the worklet stays alive but makes no sound
+      const mute = audioCtx.createGain(); mute.gain.value = 0;
+      renderNode.connect(mute); mute.connect(audioCtx.destination);
 
-      worklet.port.postMessage({ type: 'init', settings: { ..._settings } });
-    } catch (err) {
-      console.error('[SnappySynth] AudioWorklet init error:', err);
-      _setStatus('Init failed: ' + err.message, 'err');
-    }
-  }
-
-  function dispose() {
-    if (worklet)  { worklet.disconnect();  worklet  = null; }
-    if (gainNode) { gainNode.disconnect(); gainNode = null; }
-    if (audioCtx) { audioCtx.close();      audioCtx = null; }
-    _setStatus('Not loaded', 'idle');
-  }
-
-  /**
-   * loadSFBuffer — send a local file's ArrayBuffer directly to the worklet.
-   * This completely bypasses fetch() so there are zero CORS issues.
-   * The worklet receives it via a 'load_sf_buffer' message and parses inline.
-   * The ArrayBuffer is transferred (not copied) for efficiency.
-   */
-  function loadSFBuffer(arrayBuffer, filename) {
-    _settings.soundfontUrl = '';
-    _setStatus('Parsing ' + (filename || '') + '\u2026', 'loading');
-    if (!worklet) {
-      init().then(() => {
-        if (worklet) worklet.port.postMessage(
-          { type: 'load_sf_buffer', buffer: arrayBuffer, filename },
-          [arrayBuffer]  // transfer ownership — zero-copy
-        );
+      // Player node — connected to destination; drains SAB
+      playerNode = new AudioWorkletNode(audioCtx, 'snappy-player', {
+        numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2],
       });
-      return;
+      playerNode.port.postMessage({ type: 'init', sab });
+      playerNode.connect(audioCtx.destination);
+
+      _startStatsLoop();
+    } catch (err) {
+      console.error('[SnappySynth] init error:', err);
+      _sfSetStatus('Init failed: ' + err.message, 'err');
+      _initPromise = null;
+      throw err;
     }
-    worklet.port.postMessage(
+  }
+
+  // ── public API ────────────────────────────────────────────────────────────
+
+  function play() {
+    if (!ctrl) return;
+    if (audioCtx?.state === 'suspended') audioCtx.resume();
+    Atomics.store(ctrl, PLAY, 1);
+  }
+
+  function pause() {
+    if (!ctrl) return;
+    Atomics.store(ctrl, PLAY, 0);
+    // Render node keeps filling ahead — we do NOT reset writePos
+  }
+
+  function seek() {
+    // Hard reset: flush buffer so stale audio is discarded
+    if (ctrl) {
+      Atomics.store(ctrl, PLAY, 0);
+      Atomics.store(ctrl, W, 0);
+      Atomics.store(ctrl, R, 0);
+      Atomics.store(ctrl, SKIP, 0);
+    }
+    if (renderNode) renderNode.port.postMessage({ type: 'seek' });
+  }
+
+  function panic() {
+    if (renderNode) renderNode.port.postMessage({ type: 'reset' });
+  }
+
+  function sendDword(dword) {
+    if (!renderNode) return;
+    if (audioCtx?.state === 'suspended') audioCtx.resume();
+    renderNode.port.postMessage({ type: 'midi', dword });
+  }
+
+  function loadSFBuffer(arrayBuffer, filename) {
+    if (!renderNode) return;
+    renderNode.port.postMessage(
       { type: 'load_sf_buffer', buffer: arrayBuffer, filename },
       [arrayBuffer]
     );
   }
 
-  /** loadSF — URL fallback (requires CORS / same-origin) */
   function loadSF(url) {
-    _settings.soundfontUrl = url;
-    _setStatus('Connecting\u2026', 'loading');
-    if (!worklet) { init().then(() => worklet?.port.postMessage({ type: 'reload_sf', url })); return; }
-    worklet.port.postMessage({ type: 'reload_sf', url });
+    if (!renderNode) return;
+    renderNode.port.postMessage({ type: 'reload_sf', url });
   }
 
   function updateSetting(key, value) {
     _settings[key] = value;
-    if (worklet) worklet.port.postMessage({ type: 'settings', settings: { [key]: value } });
+    if (renderNode) renderNode.port.postMessage({ type: 'settings', settings: { [key]: value } });
   }
 
-  function sendDword(dword) {
-    if (!worklet) return;
-    if (audioCtx?.state === 'suspended') audioCtx.resume();
-    worklet.port.postMessage({ type: 'midi', dword });
+  async function resizeBuffer(sec) {
+    bufferSec = sec;
+    if (!audioCtx || !renderNode || !playerNode) return;
+    // Pause playback, rebuild SAB, re-init both nodes
+    pause();
+    const sr = audioCtx.sampleRate;
+    const { buf, frames } = _makeSAB(sec, sr);
+    sab        = buf;
+    ringFrames = frames;
+    const ringBytes = frames * 4;
+    ctrl = new Int32Array(sab, ringBytes * 2, 4);
+    renderNode.port.postMessage({ type: 'init', sab, settings: {} });
+    playerNode.port.postMessage({ type: 'init', sab });
   }
 
-  function sendBatch(dwords) {
-    if (!worklet || !dwords.length) return;
-    if (audioCtx?.state === 'suspended') audioCtx.resume();
-    worklet.port.postMessage({ type: 'midi_batch', dwords });
-  }
+  function isActive() { return !!renderNode; }
 
-  function panic() {
-    if (worklet) worklet.port.postMessage({ type: 'reset' });
-  }
-
-  function isActive() { return !!worklet; }
-
-  return { init, dispose, loadSF, loadSFBuffer, updateSetting, sendDword, sendBatch, panic, isActive };
+  return { init, play, pause, seek, panic, sendDword, loadSFBuffer, loadSF, updateSetting, resizeBuffer, isActive };
 }());
