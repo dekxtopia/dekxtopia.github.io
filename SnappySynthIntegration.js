@@ -7,8 +7,10 @@
  *  1. Injects CSS for the Embedded Synth panel
  *  2. Injects the "Embedded Synth (New)" tab button into .midi-out-tabs
  *  3. Injects the full settings panel HTML into .midi-out-section
- *  4. Patches switchTab() and sendMIDIEvent() / sendMIDIBatch() to route
- *     MIDI as packed DWORDs (SendDirectData format) to SnappySynthDriver.js
+ *  4. Overrides _enqueueMidi() (the real MIDI dispatch in MPWGL2.html)
+ *     to redirect MIDI to SnappySynthDriver when Embedded Synth tab is active.
+ *  5. Hooks the existing tab buttons (tabWmidi, tabMidiIn, tabNone) so
+ *     switching away from snappy triggers panic().
  *
  * Soundfont loading supports:
  *  - Local file upload via <input type="file"> (no CORS, no server needed)
@@ -82,7 +84,7 @@
     btn.className = 'midi-tab';
     btn.id = 'tabSnappy';
     btn.innerHTML = 'Embedded Synth<span class="ss-badge">New</span>';
-    btn.addEventListener('click', () => window.switchTab && window.switchTab('snappy'));
+    btn.addEventListener('click', () => _ssActivateTab());
     tabsContainer.appendChild(btn);
   }
 
@@ -201,37 +203,67 @@
     outSection.appendChild(panel);
   }
 
-  // ── 4. Patch switchTab ────────────────────────────────────────────────────
-  const _origSwitch = window.switchTab;
-  window.switchTab = function (tab) {
-    if (typeof _origSwitch === 'function') _origSwitch(tab);
-    const panel  = document.getElementById('snappyPanel');
-    const tabBtn = document.getElementById('tabSnappy');
-    if (panel)  panel.classList.toggle('on', tab === 'snappy');
-    if (tabBtn) tabBtn.classList.toggle('active', tab === 'snappy');
-    if (tab === 'snappy' && !ssBridge.isActive()) ssBridge.init();
-    if (tab !== 'snappy') ssBridge.panic();
-  };
+  // ── 4. Tab activation helpers ─────────────────────────────────────────────
+  // These use the same CSS classes as _setMidiTab() in MPWGL2.html so the
+  // UI stays consistent without needing to touch the original code.
 
-  // ── 5. Patch MIDI routing ─────────────────────────────────────────────────
-  const _origSend = window.sendMIDIEvent;
-  window.sendMIDIEvent = function (status, data1, data2) {
-    if (document.getElementById('tabSnappy')?.classList.contains('active')) {
-      ssBridge.sendDword((status & 0xFF) | ((data1 & 0xFF) << 8) | ((data2 & 0xFF) << 16));
+  function _ssActivateTab() {
+    // Deactivate all existing tabs + panels using the same pattern as MPWGL2
+    ['tabWmidi','tabMidiIn','tabNone'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.remove('active');
+    });
+    ['panelWmidi','panelMidiIn','panelNone'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.remove('on');
+    });
+    // Activate our tab + panel
+    document.getElementById('tabSnappy')?.classList.add('active');
+    document.getElementById('snappyPanel')?.classList.add('on');
+    // Mute hardware MIDI output while embedded synth is active
+    // (midiEnabled is a var in the page scope — set via window)
+    if (typeof midiEnabled !== 'undefined') window.midiEnabled = false;
+    // Init worklet lazily on first activation
+    if (!ssBridge.isActive()) ssBridge.init();
+  }
+
+  // When the user clicks any of the original tabs, deactivate snappy
+  ['tabWmidi','tabMidiIn','tabNone'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      document.getElementById('tabSnappy')?.classList.remove('active');
+      document.getElementById('snappyPanel')?.classList.remove('on');
+      ssBridge.panic();
+      // Restore midiEnabled for the hardware tabs (tabNone sets it false itself)
+      if (id !== 'tabNone' && typeof midiEnabled !== 'undefined') {
+        window.midiEnabled = true;
+      }
+    }, true); // capture phase so we run before the existing listener
+  });
+
+  // ── 5. Intercept _enqueueMidi (the REAL dispatch in MPWGL2.html) ──────────
+  //
+  // MPWGL2.html's scheduler calls _enqueueMidi(data, timestampMs) for every
+  // note-on / note-off / CC.  We replace that function with our own wrapper
+  // which redirects to the AudioWorklet when our tab is active.
+  //
+  // We wait for the page's own script to finish (it's in the same <script>
+  // tag before us, so by the time this module runs _enqueueMidi is defined).
+
+  const _origEnqueue = window._enqueueMidi;
+  window._enqueueMidi = function (data, timestampMs) {
+    const snappyActive = document.getElementById('tabSnappy')?.classList.contains('active');
+    if (snappyActive) {
+      // Convert byte array [status, d1, d2] to packed DWORD
+      const status = data[0] & 0xFF;
+      const d1     = (data[1] || 0) & 0xFF;
+      const d2     = (data[2] || 0) & 0xFF;
+      ssBridge.sendDword(status | (d1 << 8) | (d2 << 16));
       return;
     }
-    if (typeof _origSend === 'function') _origSend(status, data1, data2);
-  };
-
-  const _origBatch = window.sendMIDIBatch;
-  window.sendMIDIBatch = function (messages) {
-    if (document.getElementById('tabSnappy')?.classList.contains('active')) {
-      ssBridge.sendBatch(messages.map(m =>
-        (m[0] & 0xFF) | ((m[1] & 0xFF) << 8) | ((m[2] & 0xFF) << 16)
-      ));
-      return;
-    }
-    if (typeof _origBatch === 'function') _origBatch(messages);
+    // Otherwise fall through to the original (hardware MIDI out)
+    if (typeof _origEnqueue === 'function') _origEnqueue(data, timestampMs);
   };
 
   // ── 6. Global UI helpers ──────────────────────────────────────────────────
@@ -258,7 +290,7 @@
   };
 
   function _readAndLoadFile(file) {
-    _sfSetStatus('Reading ' + file.name + '…', 'loading');
+    _sfSetStatus('Reading ' + file.name + '\u2026', 'loading');
     const label = document.getElementById('ssSFDropLabel');
     if (label) label.innerHTML = '<strong>' + _escHtml(file.name) + '</strong> (' + _fmtSize(file.size) + ')';
     const dz = document.getElementById('ssSFDropZone');
@@ -266,8 +298,14 @@
 
     const reader = new FileReader();
     reader.onload = function (e) {
-      // Send the raw ArrayBuffer directly to the worklet — no fetch(), no CORS
-      ssBridge.loadSFBuffer(e.target.result, file.name);
+      // Make sure the worklet is running before we send the buffer
+      if (!ssBridge.isActive()) {
+        ssBridge.init().then(() => {
+          ssBridge.loadSFBuffer(e.target.result, file.name);
+        });
+      } else {
+        ssBridge.loadSFBuffer(e.target.result, file.name);
+      }
     };
     reader.onerror = function () {
       _sfSetStatus('File read error', 'err');
@@ -296,7 +334,7 @@
   window.ssLoadSFUrl = function () {
     const url = document.getElementById('ssSFUrl')?.value.trim();
     if (!url) { typeof showToast === 'function' && showToast('Enter a .sf2 URL first'); return; }
-    _sfSetStatus('Connecting…', 'loading');
+    _sfSetStatus('Connecting\u2026', 'loading');
     ssBridge.loadSF(url);
   };
 
@@ -366,7 +404,7 @@ const ssBridge = (function () {
 
       worklet.port.onmessage = ({ data: d }) => {
         if (d.type === 'sf_loading') {
-          _setStatus('Parsing…', 'loading');
+          _setStatus('Parsing\u2026', 'loading');
         } else if (d.type === 'sf_loaded') {
           _setStatus('Loaded \u2714', 'ok');
           const r = document.getElementById('ssSFRegions');
@@ -401,7 +439,7 @@ const ssBridge = (function () {
    */
   function loadSFBuffer(arrayBuffer, filename) {
     _settings.soundfontUrl = '';
-    _setStatus('Parsing ' + (filename || '') + '…', 'loading');
+    _setStatus('Parsing ' + (filename || '') + '\u2026', 'loading');
     if (!worklet) {
       init().then(() => {
         if (worklet) worklet.port.postMessage(
@@ -420,7 +458,7 @@ const ssBridge = (function () {
   /** loadSF — URL fallback (requires CORS / same-origin) */
   function loadSF(url) {
     _settings.soundfontUrl = url;
-    _setStatus('Connecting…', 'loading');
+    _setStatus('Connecting\u2026', 'loading');
     if (!worklet) { init().then(() => worklet?.port.postMessage({ type: 'reload_sf', url })); return; }
     worklet.port.postMessage({ type: 'reload_sf', url });
   }
