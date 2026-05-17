@@ -10,6 +10,10 @@
  *  4. Patches switchTab() and sendMIDIEvent() / sendMIDIBatch() to route
  *     MIDI as packed DWORDs (SendDirectData format) to SnappySynthDriver.js
  *
+ * Soundfont loading supports:
+ *  - Local file upload via <input type="file"> (no CORS, no server needed)
+ *  - Remote URL as fallback
+ *
  * MIDI DWORD format (mirrors snappysynth.c SendDirectData):
  *   dword = (status & 0xFF) | ((data1 & 0xFF) << 8) | ((data2 & 0xFF) << 16)
  */
@@ -17,36 +21,61 @@
 (function () {
   'use strict';
 
-  // ── 1. Inject CSS ───────────────────────────────────────────────────────────────
+  // ── 1. Inject CSS ─────────────────────────────────────────────────────────
   const style = document.createElement('style');
   style.textContent = `
     .ss-badge{display:inline-block;font-size:.55rem;font-weight:700;letter-spacing:.05em;
       padding:.1rem .38rem;border-radius:999px;border:1px solid rgba(52,211,153,.35);
       background:rgba(52,211,153,.12);color:#34d399;margin-left:.3rem;vertical-align:middle;}
     #snappyPanel .ss-section-label{font-size:.55rem;font-weight:700;letter-spacing:.08em;
-      text-transform:uppercase;color:rgba(196,181,253,.35);margin:.35rem 0 .18rem;}
-    .ss-row{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;margin-bottom:.25rem;}
+      text-transform:uppercase;color:rgba(196,181,253,.35);margin:.45rem 0 .2rem;}
+    .ss-row{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;margin-bottom:.28rem;}
     .ss-label{font-size:.62rem;color:rgba(196,181,253,.5);white-space:nowrap;min-width:90px;}
     .ss-ctrl{font-size:.64rem;padding:.22rem .42rem;border-radius:6px;
       border:1px solid rgba(167,139,250,.2);background:rgba(10,8,30,.7);color:#c4b5fd;flex:1;min-width:0;}
     .ss-ctrl-sm{width:72px;flex:none;}
     .ss-slider{-webkit-appearance:none;appearance:none;flex:1;height:3px;border-radius:999px;
       background:rgba(167,139,250,.18);outline:none;cursor:pointer;min-width:60px;}
-    .ss-slider::-webkit-slider-thumb{-webkit-appearance:none;width:11px;height:11px;border-radius:50%;background:#a78bfa;}
+    .ss-slider::-webkit-slider-thumb{-webkit-appearance:none;width:11px;height:11px;
+      border-radius:50%;background:#a78bfa;}
     .ss-val{font-size:.62rem;color:#a78bfa;font-variant-numeric:tabular-nums;white-space:nowrap;min-width:3.5ch;}
-    .ss-status{font-size:.62rem;font-weight:600;padding:.15rem .45rem;border-radius:5px;border:1px solid;white-space:nowrap;}
-    .ss-status.idle{background:rgba(167,139,250,.07);border-color:rgba(167,139,250,.18);color:rgba(196,181,253,.4);}
-    .ss-status.loading{background:rgba(251,191,36,.07);border-color:rgba(251,191,36,.25);color:#fbbf24;}
-    .ss-status.ok{background:rgba(52,211,153,.07);border-color:rgba(52,211,153,.25);color:#34d399;}
-    .ss-status.err{background:rgba(251,113,133,.07);border-color:rgba(251,113,133,.22);color:#fb7185;}
+    .ss-status{font-size:.62rem;font-weight:600;padding:.15rem .45rem;border-radius:5px;
+      border:1px solid;white-space:nowrap;}
+    .ss-status.idle   {background:rgba(167,139,250,.07);border-color:rgba(167,139,250,.18);color:rgba(196,181,253,.4);}
+    .ss-status.loading{background:rgba(251,191,36,.07); border-color:rgba(251,191,36,.25); color:#fbbf24;}
+    .ss-status.ok     {background:rgba(52,211,153,.07); border-color:rgba(52,211,153,.25); color:#34d399;}
+    .ss-status.err    {background:rgba(251,113,133,.07);border-color:rgba(251,113,133,.22);color:#fb7185;}
     .ss-toggle{display:inline-flex;align-items:center;gap:.4rem;cursor:pointer;
       font-size:.62rem;color:rgba(196,181,253,.6);}
     .ss-toggle input[type=checkbox]{accent-color:#a78bfa;width:13px;height:13px;cursor:pointer;}
     #ssVoiceCount{font-size:.62rem;color:#34d399;font-variant-numeric:tabular-nums;}
+
+    /* SF2 upload drop zone */
+    #ssSFDropZone{
+      border:1.5px dashed rgba(167,139,250,.3);border-radius:8px;
+      padding:.55rem .7rem;cursor:pointer;transition:border-color .15s,background .15s;
+      display:flex;align-items:center;gap:.55rem;min-height:38px;
+    }
+    #ssSFDropZone:hover,#ssSFDropZone.dragover{
+      border-color:#a78bfa;background:rgba(167,139,250,.07);
+    }
+    #ssSFDropZone .dz-icon{font-size:1.1rem;line-height:1;flex-shrink:0;}
+    #ssSFDropZone .dz-label{font-size:.62rem;color:rgba(196,181,253,.55);line-height:1.45;}
+    #ssSFDropZone .dz-label strong{color:#c4b5fd;}
+    #ssSFDropZone.has-file .dz-label{color:#34d399;}
+    #ssSFDropZone.has-file{border-color:rgba(52,211,153,.35);}
+
+    /* URL row (collapsed by default, toggle link) */
+    #ssSFUrlRow{display:none;margin-top:.2rem;}
+    #ssSFUrlRow.visible{display:flex;}
+    #ssUrlToggle{font-size:.58rem;color:rgba(167,139,250,.45);cursor:pointer;
+      text-decoration:underline;text-underline-offset:2px;margin-top:.1rem;
+      display:inline-block;user-select:none;}
+    #ssUrlToggle:hover{color:#a78bfa;}
   `;
   document.head.appendChild(style);
 
-  // ── 2. Inject Tab Button ────────────────────────────────────────────────────
+  // ── 2. Inject Tab Button ──────────────────────────────────────────────────
   const tabsContainer = document.querySelector('.midi-out-tabs');
   if (tabsContainer) {
     const btn = document.createElement('button');
@@ -57,7 +86,7 @@
     tabsContainer.appendChild(btn);
   }
 
-  // ── 3. Inject Panel HTML ───────────────────────────────────────────────────
+  // ── 3. Inject Panel HTML ──────────────────────────────────────────────────
   const outSection = document.querySelector('.midi-out-section');
   if (outSection) {
     const panel = document.createElement('div');
@@ -72,17 +101,39 @@
         </span>
       </div>
 
+      <!-- Soundfont loader -->
       <div class="ss-section-label">Soundfont (.sf2)</div>
-      <div class="ss-row">
+
+      <!-- Hidden real file input -->
+      <input type="file" id="ssSFFileInput" accept=".sf2,audio/x-sf2"
+        style="display:none" onchange="ssSFFileChosen(this)">
+
+      <!-- Drop zone / click-to-browse -->
+      <div id="ssSFDropZone"
+        onclick="document.getElementById('ssSFFileInput').click()"
+        ondragover="event.preventDefault();this.classList.add('dragover')"
+        ondragleave="this.classList.remove('dragover')"
+        ondrop="ssSFDropped(event)">
+        <span class="dz-icon">&#127925;</span>
+        <span class="dz-label" id="ssSFDropLabel">
+          <strong>Click to browse</strong> or drag &amp; drop an .sf2 file here
+        </span>
+      </div>
+
+      <!-- Optional URL fallback -->
+      <span id="ssUrlToggle" onclick="ssToggleUrlRow()">or load from URL instead</span>
+      <div class="ss-row" id="ssSFUrlRow">
         <input class="ss-ctrl" id="ssSFUrl" type="url"
           placeholder="https://example.com/soundfont.sf2" spellcheck="false">
-        <button class="btn-md" onclick="ssLoadSF()">Load</button>
+        <button class="btn-md" onclick="ssLoadSFUrl()">Load</button>
       </div>
-      <div class="ss-row">
+
+      <div class="ss-row" style="margin-top:.3rem">
         <span class="ss-status idle" id="ssSFStatus">Not loaded</span>
         <span id="ssSFRegions" style="font-size:.58rem;color:rgba(196,181,253,.3)"></span>
       </div>
 
+      <!-- Voice engine -->
       <div class="ss-section-label">Voice Engine</div>
       <div class="ss-row">
         <span class="ss-label">Voices</span>
@@ -107,6 +158,7 @@
         <span id="ssVoiceCount">—</span>
       </div>
 
+      <!-- Buffer -->
       <div class="ss-section-label">Buffer</div>
       <div class="ss-row">
         <span class="ss-label">Buffer Frames</span>
@@ -118,6 +170,7 @@
         </select>
       </div>
 
+      <!-- Limiter -->
       <div class="ss-section-label">Limiter</div>
       <div class="ss-row">
         <label class="ss-toggle">
@@ -148,31 +201,19 @@
     outSection.appendChild(panel);
   }
 
-  // ── 4. Patch switchTab to show/hide snappyPanel ──────────────────────────
-  // We wrap the existing switchTab from MPWGL2 to include our panel
+  // ── 4. Patch switchTab ────────────────────────────────────────────────────
   const _origSwitch = window.switchTab;
   window.switchTab = function (tab) {
-    // Let original handler run first (it shows/hides other panels)
     if (typeof _origSwitch === 'function') _origSwitch(tab);
-
-    // Show/hide snappy panel
-    const panel = document.getElementById('snappyPanel');
+    const panel  = document.getElementById('snappyPanel');
     const tabBtn = document.getElementById('tabSnappy');
-    if (panel) panel.classList.toggle('on', tab === 'snappy');
+    if (panel)  panel.classList.toggle('on', tab === 'snappy');
     if (tabBtn) tabBtn.classList.toggle('active', tab === 'snappy');
-
-    if (tab === 'snappy' && !ssBridge.isActive()) {
-      ssBridge.init();
-    }
-    if (tab !== 'snappy') {
-      ssBridge.panic();
-    }
+    if (tab === 'snappy' && !ssBridge.isActive()) ssBridge.init();
+    if (tab !== 'snappy') ssBridge.panic();
   };
 
-  // ── 5. Patch MIDI output routing ─────────────────────────────────────────────
-  // Intercept sendMIDIEvent(status, data1, data2) when embedded tab active.
-  // DWORD packing mirrors snappysynth.c SendDirectData:
-  //   dword = status | (data1 << 8) | (data2 << 16)
+  // ── 5. Patch MIDI routing ─────────────────────────────────────────────────
   const _origSend = window.sendMIDIEvent;
   window.sendMIDIEvent = function (status, data1, data2) {
     if (document.getElementById('tabSnappy')?.classList.contains('active')) {
@@ -193,13 +234,79 @@
     if (typeof _origBatch === 'function') _origBatch(messages);
   };
 
-  // ── 6. Global UI helpers (called from injected HTML onclick) ─────────────
-  window.ssLoadSF = function () {
+  // ── 6. Global UI helpers ──────────────────────────────────────────────────
+
+  /** Called when user picks a file via the file input */
+  window.ssSFFileChosen = function (input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    _readAndLoadFile(file);
+  };
+
+  /** Called when user drops a file onto the drop zone */
+  window.ssSFDropped = function (event) {
+    event.preventDefault();
+    const dz = document.getElementById('ssSFDropZone');
+    if (dz) dz.classList.remove('dragover');
+    const file = event.dataTransfer?.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.sf2')) {
+      _sfSetStatus('Not an .sf2 file', 'err');
+      return;
+    }
+    _readAndLoadFile(file);
+  };
+
+  function _readAndLoadFile(file) {
+    _sfSetStatus('Reading ' + file.name + '…', 'loading');
+    const label = document.getElementById('ssSFDropLabel');
+    if (label) label.innerHTML = '<strong>' + _escHtml(file.name) + '</strong> (' + _fmtSize(file.size) + ')';
+    const dz = document.getElementById('ssSFDropZone');
+    if (dz) dz.classList.add('has-file');
+
+    const reader = new FileReader();
+    reader.onload = function (e) {
+      // Send the raw ArrayBuffer directly to the worklet — no fetch(), no CORS
+      ssBridge.loadSFBuffer(e.target.result, file.name);
+    };
+    reader.onerror = function () {
+      _sfSetStatus('File read error', 'err');
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function _sfSetStatus(text, cls) {
+    const el = document.getElementById('ssSFStatus');
+    if (!el) return;
+    el.textContent = text;
+    el.className = 'ss-status ' + (cls || 'idle');
+  }
+
+  function _escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function _fmtSize(bytes) {
+    if (bytes < 1024)       return bytes + ' B';
+    if (bytes < 1048576)    return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1048576).toFixed(1) + ' MB';
+  }
+
+  /** Load SF2 from a URL (fallback row) */
+  window.ssLoadSFUrl = function () {
     const url = document.getElementById('ssSFUrl')?.value.trim();
     if (!url) { typeof showToast === 'function' && showToast('Enter a .sf2 URL first'); return; }
-    const st = document.getElementById('ssSFStatus');
-    if (st) { st.textContent = 'Connecting…'; st.className = 'ss-status loading'; }
+    _sfSetStatus('Connecting…', 'loading');
     ssBridge.loadSF(url);
+  };
+
+  /** Toggle URL fallback row */
+  window.ssToggleUrlRow = function () {
+    const row    = document.getElementById('ssSFUrlRow');
+    const toggle = document.getElementById('ssUrlToggle');
+    if (!row) return;
+    const visible = row.classList.toggle('visible');
+    if (toggle) toggle.textContent = visible ? 'hide URL input' : 'or load from URL instead';
   };
 
   window.ssUpdateSetting = function (key, value) {
@@ -208,7 +315,7 @@
 
 })();
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
 // SnappySynth Bridge
 // Mirrors the C API surface from snappysynth.c:
 //   InitializeKDMAPIStream  → ssBridge.init()
@@ -216,7 +323,7 @@
 //   SendMIDIDataBatch       → ssBridge.sendBatch(dwords[])
 //   TerminateKDMAPIStream   → ssBridge.dispose()
 //   ResetKDMAPIStream       → ssBridge.panic()
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
 const ssBridge = (function () {
   let audioCtx = null;
   let worklet  = null;
@@ -247,9 +354,9 @@ const ssBridge = (function () {
     try {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       await audioCtx.audioWorklet.addModule('SnappySynthDriver.js');
-      worklet  = new AudioWorkletNode(audioCtx, 'snappy-synth', {
-        numberOfInputs: 0,
-        numberOfOutputs: 1,
+      worklet = new AudioWorkletNode(audioCtx, 'snappy-synth', {
+        numberOfInputs:     0,
+        numberOfOutputs:    1,
         outputChannelCount: [2],
       });
       gainNode = audioCtx.createGain();
@@ -259,7 +366,7 @@ const ssBridge = (function () {
 
       worklet.port.onmessage = ({ data: d }) => {
         if (d.type === 'sf_loading') {
-          _setStatus('Loading…', 'loading');
+          _setStatus('Parsing…', 'loading');
         } else if (d.type === 'sf_loaded') {
           _setStatus('Loaded \u2714', 'ok');
           const r = document.getElementById('ssSFRegions');
@@ -286,8 +393,34 @@ const ssBridge = (function () {
     _setStatus('Not loaded', 'idle');
   }
 
+  /**
+   * loadSFBuffer — send a local file's ArrayBuffer directly to the worklet.
+   * This completely bypasses fetch() so there are zero CORS issues.
+   * The worklet receives it via a 'load_sf_buffer' message and parses inline.
+   * The ArrayBuffer is transferred (not copied) for efficiency.
+   */
+  function loadSFBuffer(arrayBuffer, filename) {
+    _settings.soundfontUrl = '';
+    _setStatus('Parsing ' + (filename || '') + '…', 'loading');
+    if (!worklet) {
+      init().then(() => {
+        if (worklet) worklet.port.postMessage(
+          { type: 'load_sf_buffer', buffer: arrayBuffer, filename },
+          [arrayBuffer]  // transfer ownership — zero-copy
+        );
+      });
+      return;
+    }
+    worklet.port.postMessage(
+      { type: 'load_sf_buffer', buffer: arrayBuffer, filename },
+      [arrayBuffer]
+    );
+  }
+
+  /** loadSF — URL fallback (requires CORS / same-origin) */
   function loadSF(url) {
     _settings.soundfontUrl = url;
+    _setStatus('Connecting…', 'loading');
     if (!worklet) { init().then(() => worklet?.port.postMessage({ type: 'reload_sf', url })); return; }
     worklet.port.postMessage({ type: 'reload_sf', url });
   }
@@ -297,7 +430,6 @@ const ssBridge = (function () {
     if (worklet) worklet.port.postMessage({ type: 'settings', settings: { [key]: value } });
   }
 
-  // sendDword — SendDirectData-compatible packed DWORD
   function sendDword(dword) {
     if (!worklet) return;
     if (audioCtx?.state === 'suspended') audioCtx.resume();
@@ -316,5 +448,5 @@ const ssBridge = (function () {
 
   function isActive() { return !!worklet; }
 
-  return { init, dispose, loadSF, updateSetting, sendDword, sendBatch, panic, isActive };
+  return { init, dispose, loadSF, loadSFBuffer, updateSetting, sendDword, sendBatch, panic, isActive };
 }());
