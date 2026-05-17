@@ -221,7 +221,6 @@
     if (typeof _origEnqueue === 'function') _origEnqueue(data, timestampMs);
   };
 
-  // Intercept play/pause from the page transport
   const _origSetPlaying = window._setPlaying;
   window._setPlaying = function (playing) {
     if (document.getElementById('tabSnappy')?.classList.contains('active')) {
@@ -279,15 +278,15 @@
 //  SnappySynth Bridge  —  owns both worklet nodes, relays chunks, signals play
 // ═════════════════════════════════════════════════════════════════════════════
 const ssBridge = (function () {
-  let audioCtx    = null;
-  let renderNode  = null;
-  let playerNode  = null;
+  let audioCtx     = null;
+  let renderNode   = null;
+  let playerNode   = null;
   let _initPromise = null;
-  let _modulePromise = null;  // pre-loaded module promise
+  let _modulePromise = null;   // resolves once addModule() has finished
   let _bufferSec   = 8;
   let _playing     = false;
 
-  // Absolute URL so AudioWorklet resolves it correctly regardless of context
+  // Absolute URL — resolves correctly regardless of AudioWorklet context
   const _driverURL = new URL('SnappySynthDriver.js', document.baseURI).href;
 
   const _settings = {
@@ -297,28 +296,30 @@ const ssBridge = (function () {
     masterVol:1.0,
   };
 
-  // Running stats (updated by onmessage from render node)
-  let _statBufSec  = 0;
-  let _statSkip    = 0;
-  let _statsRaf    = null;
+  let _statBufSec = 0;
+  let _statSkip   = 0;
+  let _statsRaf   = null;
 
-  // ── Pre-load the worklet module as soon as AudioContext is allowed ─────────
-  // We eagerly create a temporary AudioContext just to register the module
-  // so it is ready before the user clicks the tab.
+  // ── Pre-load: register the worklet module on first user interaction ────────
   function _preloadModule() {
     if (_modulePromise) return _modulePromise;
-    // Only attempt if the browser supports AudioWorklet
-    if (!window.AudioWorklet) return Promise.resolve();
+    if (!window.AudioWorklet) { _modulePromise = Promise.resolve(); return _modulePromise; }
     try {
-      const tmpCtx = new (window.AudioContext || window.webkitAudioContext)();
-      _modulePromise = tmpCtx.audioWorklet.addModule(_driverURL)
-        .then(() => { audioCtx = tmpCtx; })
-        .catch(() => { _modulePromise = null; });
-    } catch(e) { _modulePromise = null; }
-    return _modulePromise;
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      _modulePromise = audioCtx.audioWorklet.addModule(_driverURL);
+      _modulePromise.catch(() => {
+        // If preload fails reset so _doInit can retry with a fresh context
+        _modulePromise = null;
+        audioCtx = null;
+      });
+    } catch(e) {
+      _modulePromise = null;
+      audioCtx = null;
+    }
+    return _modulePromise || Promise.resolve();
   }
 
-  // Start pre-loading on first user interaction (needed to create AudioContext)
+  // Kick off pre-load on the very first user gesture
   ['click','keydown','touchstart'].forEach(ev =>
     document.addEventListener(ev, function _once() {
       document.removeEventListener(ev, _once);
@@ -327,21 +328,21 @@ const ssBridge = (function () {
   );
 
   function _sfSetStatus(text, cls) {
-    const el=document.getElementById('ssSFStatus'); if (!el) return;
-    el.textContent=text; el.className='ss-status '+(cls||'idle');
+    const el = document.getElementById('ssSFStatus'); if (!el) return;
+    el.textContent = text; el.className = 'ss-status ' + (cls || 'idle');
   }
 
   function _startStatsLoop() {
     if (_statsRaf) return;
     function tick() {
-      if (!renderNode) { _statsRaf=null; return; }
+      if (!renderNode) { _statsRaf = null; return; }
       const fill  = document.getElementById('ssBufFill');
       const cur   = document.getElementById('ssBufSecCur');
       const badge = document.getElementById('ssSkipBadge');
       const pct   = Math.min(100, (_statBufSec / _bufferSec) * 100);
       if (fill)  fill.style.width = pct.toFixed(1) + '%';
       if (cur)   cur.textContent  = _statBufSec.toFixed(1) + ' s';
-      if (badge) { badge.textContent='skip >'+_statSkip; badge.classList.toggle('on',_statSkip>0); }
+      if (badge) { badge.textContent = 'skip >' + _statSkip; badge.classList.toggle('on', _statSkip > 0); }
       _statsRaf = requestAnimationFrame(tick);
     }
     _statsRaf = requestAnimationFrame(tick);
@@ -355,104 +356,108 @@ const ssBridge = (function () {
 
   async function _doInit() {
     try {
-      // Reuse the pre-loaded context if available, otherwise create fresh
-      if (!audioCtx) {
+      // If the preload already started, wait for it to finish so the module
+      // is guaranteed to be registered before we create AudioWorkletNodes.
+      if (_modulePromise) {
+        await _modulePromise;
+      } else {
+        // No preload yet — create context and load module now
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        await audioCtx.audioWorklet.addModule(_driverURL);
       }
-      // addModule is a no-op if the module was already registered in this context
-      await audioCtx.audioWorklet.addModule(_driverURL);
 
-      // Render node — output muted, just keeps the worklet alive
+      if (audioCtx.state === 'suspended') await audioCtx.resume();
+
+      // Render node — output muted, keeps worklet alive
       renderNode = new AudioWorkletNode(audioCtx, 'snappy-render', {
-        numberOfInputs:0, numberOfOutputs:1, outputChannelCount:[2],
+        numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2],
       });
-      renderNode.port.onmessage = ({ data:d }) => {
+      renderNode.port.onmessage = ({ data: d }) => {
         if (d.type === 'sf_loading') {
           _sfSetStatus('Parsing…', 'loading');
         } else if (d.type === 'sf_loaded') {
           _sfSetStatus('Loaded ✔', 'ok');
-          const r=document.getElementById('ssSFRegions');
-          if (r) r.textContent=d.regionCount+' regions';
+          const r = document.getElementById('ssSFRegions');
+          if (r) r.textContent = d.regionCount + ' regions';
         } else if (d.type === 'sf_error') {
-          _sfSetStatus('Error: '+d.message, 'err');
+          _sfSetStatus('Error: ' + d.message, 'err');
         } else if (d.type === 'stats') {
           _statBufSec = d.bufferSec;
           _statSkip   = d.skipping;
-          const el=document.getElementById('ssVoiceCount');
-          if (el) el.textContent=d.activeVoices;
+          const el = document.getElementById('ssVoiceCount');
+          if (el) el.textContent = d.activeVoices;
         } else if (d.type === 'chunk') {
-          // Relay pre-rendered chunk to the player node (zero-copy re-transfer)
-          playerNode.port.postMessage({type:'chunk',bufL:d.bufL,bufR:d.bufR},[d.bufL,d.bufR]);
+          playerNode.port.postMessage({ type: 'chunk', bufL: d.bufL, bufR: d.bufR }, [d.bufL, d.bufR]);
         } else if (d.type === 'flush') {
-          playerNode.port.postMessage({type:'flush'});
+          playerNode.port.postMessage({ type: 'flush' });
         }
       };
-      const mute = audioCtx.createGain(); mute.gain.value=0;
+      const mute = audioCtx.createGain(); mute.gain.value = 0;
       renderNode.connect(mute); mute.connect(audioCtx.destination);
-      renderNode.port.postMessage({type:'init', settings:{..._settings}});
+      renderNode.port.postMessage({ type: 'init', settings: { ..._settings } });
 
       // Player node — connected to destination
       playerNode = new AudioWorkletNode(audioCtx, 'snappy-player', {
-        numberOfInputs:0, numberOfOutputs:1, outputChannelCount:[2],
+        numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2],
       });
       playerNode.connect(audioCtx.destination);
 
       _startStatsLoop();
     } catch (err) {
       console.error('[SnappySynth] init error:', err);
-      _sfSetStatus('Init failed: '+err.message, 'err');
-      _initPromise=null; throw err;
+      _sfSetStatus('Init failed: ' + err.message, 'err');
+      _initPromise = null; throw err;
     }
   }
 
   function play() {
-    _playing=true;
-    if (audioCtx?.state==='suspended') audioCtx.resume();
-    renderNode?.port.postMessage({type:'playing', value:true});
-    playerNode?.port.postMessage({type:'playing', value:true});
+    _playing = true;
+    if (audioCtx?.state === 'suspended') audioCtx.resume();
+    renderNode?.port.postMessage({ type: 'playing', value: true });
+    playerNode?.port.postMessage({ type: 'playing', value: true });
   }
 
   function pause() {
-    _playing=false;
-    renderNode?.port.postMessage({type:'playing', value:false});
-    playerNode?.port.postMessage({type:'playing', value:false});
+    _playing = false;
+    renderNode?.port.postMessage({ type: 'playing', value: false });
+    playerNode?.port.postMessage({ type: 'playing', value: false });
   }
 
   function seek() {
-    _playing=false;
-    renderNode?.port.postMessage({type:'seek'});
+    _playing = false;
+    renderNode?.port.postMessage({ type: 'seek' });
   }
 
   function panic() {
-    renderNode?.port.postMessage({type:'reset'});
+    renderNode?.port.postMessage({ type: 'reset' });
   }
 
   function sendDword(dword) {
     if (!renderNode) return;
-    if (audioCtx?.state==='suspended') audioCtx.resume();
-    renderNode.port.postMessage({type:'midi', dword});
+    if (audioCtx?.state === 'suspended') audioCtx.resume();
+    renderNode.port.postMessage({ type: 'midi', dword });
   }
 
   function loadSFBuffer(arrayBuffer, filename) {
     if (!renderNode) return;
     renderNode.port.postMessage(
-      {type:'load_sf_buffer', buffer:arrayBuffer, filename},
+      { type: 'load_sf_buffer', buffer: arrayBuffer, filename },
       [arrayBuffer]
     );
   }
 
   function loadSF(url) {
     if (!renderNode) return;
-    renderNode.port.postMessage({type:'reload_sf', url});
+    renderNode.port.postMessage({ type: 'reload_sf', url });
   }
 
   function updateSetting(key, value) {
-    _settings[key]=value;
-    if (key==='bufferSec') { _bufferSec=value; return; }
-    renderNode?.port.postMessage({type:'settings', settings:{[key]:value}});
+    _settings[key] = value;
+    if (key === 'bufferSec') { _bufferSec = value; return; }
+    renderNode?.port.postMessage({ type: 'settings', settings: { [key]: value } });
   }
 
   function isActive() { return !!renderNode; }
 
-  return {init, play, pause, seek, panic, sendDword, loadSFBuffer, loadSF, updateSetting, isActive};
+  return { init, play, pause, seek, panic, sendDword, loadSFBuffer, loadSF, updateSetting, isActive };
 }());
