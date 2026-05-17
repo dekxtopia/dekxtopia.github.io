@@ -343,6 +343,10 @@ const ssBridge = (function () {
       if (fill)  fill.style.width = pct.toFixed(1) + '%';
       if (cur)   cur.textContent  = _statBufSec.toFixed(1) + ' s';
       if (badge) { badge.textContent = 'skip >' + _statSkip; badge.classList.toggle('on', _statSkip > 0); }
+
+      // ── Exponer skip vel de SnappySynth al chart global ──
+      window._ssSkipVel = _statSkip;
+
       _statsRaf = requestAnimationFrame(tick);
     }
     _statsRaf = requestAnimationFrame(tick);
