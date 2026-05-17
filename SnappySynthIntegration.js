@@ -191,7 +191,13 @@
     document.getElementById('tabSnappy')?.classList.add('active');
     document.getElementById('snappyPanel')?.classList.add('on');
     if (typeof midiEnabled !== 'undefined') window.midiEnabled = false;
-    ssBridge.init();
+    // FIX: init the bridge and then sync the current play state so the
+    // player node is not left permanently paused after tab switch.
+    ssBridge.init().then(() => {
+      if (typeof window._isPlaying === 'boolean' ? window._isPlaying : false) {
+        ssBridge.play();
+      }
+    });
   }
 
   function _ssDeactivateTab() {
@@ -221,8 +227,10 @@
     if (typeof _origEnqueue === 'function') _origEnqueue(data, timestampMs);
   };
 
+  // FIX: track play state globally so _ssActivateTab can read it on demand.
   const _origSetPlaying = window._setPlaying;
   window._setPlaying = function (playing) {
+    window._isPlaying = !!playing;   // ← expose current state
     if (document.getElementById('tabSnappy')?.classList.contains('active')) {
       if (playing) ssBridge.play(); else ssBridge.pause();
     }
@@ -246,7 +254,12 @@
     if (label) label.innerHTML = '<strong>' + _esc(file.name) + '</strong> (' + _sz(file.size) + ')';
     document.getElementById('ssSFDropZone')?.classList.add('has-file');
     const reader = new FileReader();
-    reader.onload  = e => ssBridge.init().then(() => ssBridge.loadSFBuffer(e.target.result, file.name));
+    // FIX: after the SF2 is loaded into the worklet, re-sync play state so the
+    // player node starts draining if playback was already active.
+    reader.onload  = e => ssBridge.init().then(() => {
+      ssBridge.loadSFBuffer(e.target.result, file.name);
+      if (window._isPlaying) ssBridge.play();
+    });
     reader.onerror = () => _sfSetStatus('File read error', 'err');
     reader.readAsArrayBuffer(file);
   }
@@ -254,7 +267,11 @@
     const url = document.getElementById('ssSFUrl')?.value.trim();
     if (!url) { typeof showToast==='function' && showToast('Enter a .sf2 URL first'); return; }
     _sfSetStatus('Connecting…', 'loading');
-    ssBridge.init().then(() => ssBridge.loadSF(url));
+    // FIX: same play-state re-sync after URL load.
+    ssBridge.init().then(() => {
+      ssBridge.loadSF(url);
+      if (window._isPlaying) ssBridge.play();
+    });
   };
   window.ssToggleUrlRow = function () {
     const row=document.getElementById('ssSFUrlRow'), t=document.getElementById('ssUrlToggle');
@@ -383,6 +400,12 @@ const ssBridge = (function () {
           _sfSetStatus('Loaded ✔', 'ok');
           const r = document.getElementById('ssSFRegions');
           if (r) r.textContent = d.regionCount + ' regions';
+          // FIX: re-sync play state after the SF2 finishes parsing inside the
+          // worklet — this is the critical moment where voices become usable.
+          if (_playing) {
+            renderNode.port.postMessage({ type: 'playing', value: true });
+            playerNode?.port.postMessage({ type: 'playing', value: true });
+          }
         } else if (d.type === 'sf_error') {
           _sfSetStatus('Error: ' + d.message, 'err');
         } else if (d.type === 'stats') {
@@ -405,6 +428,13 @@ const ssBridge = (function () {
         numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2],
       });
       playerNode.connect(audioCtx.destination);
+
+      // FIX: if play() was called before init finished (e.g. MIDI was already
+      // playing when the tab was activated) propagate the playing flag now.
+      if (_playing) {
+        renderNode.port.postMessage({ type: 'playing', value: true });
+        playerNode.port.postMessage({ type: 'playing', value: true });
+      }
 
       _startStatsLoop();
     } catch (err) {
