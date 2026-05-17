@@ -283,8 +283,12 @@ const ssBridge = (function () {
   let renderNode  = null;
   let playerNode  = null;
   let _initPromise = null;
+  let _modulePromise = null;  // pre-loaded module promise
   let _bufferSec   = 8;
   let _playing     = false;
+
+  // Absolute URL so AudioWorklet resolves it correctly regardless of context
+  const _driverURL = new URL('SnappySynthDriver.js', document.baseURI).href;
 
   const _settings = {
     numVoices:512, numLayers:4, velThresh:0,
@@ -297,6 +301,30 @@ const ssBridge = (function () {
   let _statBufSec  = 0;
   let _statSkip    = 0;
   let _statsRaf    = null;
+
+  // ── Pre-load the worklet module as soon as AudioContext is allowed ─────────
+  // We eagerly create a temporary AudioContext just to register the module
+  // so it is ready before the user clicks the tab.
+  function _preloadModule() {
+    if (_modulePromise) return _modulePromise;
+    // Only attempt if the browser supports AudioWorklet
+    if (!window.AudioWorklet) return Promise.resolve();
+    try {
+      const tmpCtx = new (window.AudioContext || window.webkitAudioContext)();
+      _modulePromise = tmpCtx.audioWorklet.addModule(_driverURL)
+        .then(() => { audioCtx = tmpCtx; })
+        .catch(() => { _modulePromise = null; });
+    } catch(e) { _modulePromise = null; }
+    return _modulePromise;
+  }
+
+  // Start pre-loading on first user interaction (needed to create AudioContext)
+  ['click','keydown','touchstart'].forEach(ev =>
+    document.addEventListener(ev, function _once() {
+      document.removeEventListener(ev, _once);
+      _preloadModule();
+    }, { once: true, passive: true })
+  );
 
   function _sfSetStatus(text, cls) {
     const el=document.getElementById('ssSFStatus'); if (!el) return;
@@ -327,8 +355,12 @@ const ssBridge = (function () {
 
   async function _doInit() {
     try {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      await audioCtx.audioWorklet.addModule('SnappySynthDriver.js');
+      // Reuse the pre-loaded context if available, otherwise create fresh
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      // addModule is a no-op if the module was already registered in this context
+      await audioCtx.audioWorklet.addModule(_driverURL);
 
       // Render node — output muted, just keeps the worklet alive
       renderNode = new AudioWorkletNode(audioCtx, 'snappy-render', {
@@ -384,13 +416,11 @@ const ssBridge = (function () {
     _playing=false;
     renderNode?.port.postMessage({type:'playing', value:false});
     playerNode?.port.postMessage({type:'playing', value:false});
-    // Render node keeps filling ahead — we do NOT seek/flush
   }
 
   function seek() {
     _playing=false;
     renderNode?.port.postMessage({type:'seek'});
-    // flush is relayed automatically via the 'flush' message from render node
   }
 
   function panic() {
@@ -418,7 +448,7 @@ const ssBridge = (function () {
 
   function updateSetting(key, value) {
     _settings[key]=value;
-    if (key==='bufferSec') { _bufferSec=value; return; }  // UI only, ring is fixed at init
+    if (key==='bufferSec') { _bufferSec=value; return; }
     renderNode?.port.postMessage({type:'settings', settings:{[key]:value}});
   }
 
