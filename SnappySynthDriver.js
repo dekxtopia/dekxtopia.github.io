@@ -15,7 +15,8 @@
  *      render passes, writing 128-frame stereo blocks into the ring.
  *    • When the ring has enough data it sends a transferable chunk to
  *      the player via postMessage so the player can queue it.
- *    • Implements Kiva-style velocity skip when the ring runs low.
+ *    • Implements Kiva-style velocity skip when the ring runs LOW
+ *      (i.e. buffer is almost empty = we are behind schedule).
  *
  *  snappy-player  — DAC drain node.
  *    • Receives pre-rendered Float32 chunks from snappy-render via
@@ -56,6 +57,9 @@ const PASSES_PER_CB = 64;     // max render passes per process() callback
 const RING_SECONDS  = 8;
 // Chunk size sent to the player: 2048 frames ≈ 42 ms at 48 kHz
 const CHUNK_FRAMES  = 2048;
+// Skip vel kicks in when buffered audio drops below this threshold (in frames).
+// At 48 kHz, 9600 frames = 200 ms — tight enough to react before a glitch.
+const SKIP_LOW_FRAMES = 9600;
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -408,14 +412,36 @@ class SnappyRenderProcessor extends AudioWorkletProcessor {
   }
 
   // ── Render one BLOCK into the ring ────────────────────────────────────────
-  // Returns false if the ring is full.
+  // Returns false if the ring is full OR if not playing (ring is not being
+  // drained by the player so we must not overfill it with stale silence).
   _renderBlock() {
     const buffered = this._writePos - this._readPos;
-    if(buffered + BLOCK > this._ringSize) return false;  // ring full
 
-    // FIX: skipVel sube conforme el buffer se LLENA, no cuando está vacío.
-    // buffer vacío → skipVel=0 (no skip), buffer lleno → skipVel alto.
-    this._skipVel = clamp(buffered / 100 - 10, 0, 127) | 0;
+    // FIX A: When paused the player does not drain, so the ring fills up with
+    // silence and _readPos never advances.  Stop producing frames until the
+    // player starts draining again.  We keep a small headroom (SKIP_LOW_FRAMES)
+    // so that on play() the first chunks are already queued.
+    if (!this.playing && buffered >= SKIP_LOW_FRAMES) return false;
+
+    // Ring physically full — wait regardless of play state.
+    if (buffered + BLOCK > this._ringSize) return false;
+
+    // FIX B: skipVel is an ANTI-STARVATION mechanism.  It must rise when the
+    // buffer is NEARLY EMPTY (we are falling behind the DAC), not when it is
+    // full.  Formula: 0 when buffered >= SKIP_LOW_FRAMES, ramps up as buffered
+    // approaches 0.
+    if (this.playing) {
+      if (buffered >= SKIP_LOW_FRAMES) {
+        this._skipVel = 0;
+      } else {
+        // Linear ramp: 0 at SKIP_LOW_FRAMES, 127 at 0 frames buffered.
+        this._skipVel = clamp(((SKIP_LOW_FRAMES - buffered) / SKIP_LOW_FRAMES) * 127, 0, 127) | 0;
+      }
+    } else {
+      // Not playing — never skip notes (they will be rendered into the
+      // pre-roll buffer so they are ready when play() is called).
+      this._skipVel = 0;
+    }
 
     // Drain MIDI queue first
     const batch=this.midiQueue.splice(0,this.midiQueue.length);
