@@ -413,8 +413,9 @@ class SnappyRenderProcessor extends AudioWorkletProcessor {
     const buffered = this._writePos - this._readPos;
     if(buffered + BLOCK > this._ringSize) return false;  // ring full
 
-    // Kiva SkippingVelocity formula
-    this._skipVel = clamp(127 + 10 - buffered / 100, 0, 127) | 0;
+    // FIX: skipVel sube conforme el buffer se LLENA, no cuando está vacío.
+    // buffer vacío → skipVel=0 (no skip), buffer lleno → skipVel alto.
+    this._skipVel = clamp(buffered / 100 - 10, 0, 127) | 0;
 
     // Drain MIDI queue first
     const batch=this.midiQueue.splice(0,this.midiQueue.length);
