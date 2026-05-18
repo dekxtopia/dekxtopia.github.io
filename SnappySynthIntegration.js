@@ -621,6 +621,7 @@ registerProcessor('snappy-synth', SnappySynthProcessor);
     }, true);
   });
 
+  // Patch _enqueueMidi to route through SnappySynth when active
   Promise.resolve().then(() => {
     const _orig = window._enqueueMidi;
     window._enqueueMidi = function (data, timestampMs) {
@@ -634,14 +635,25 @@ registerProcessor('snappy-synth', SnappySynthProcessor);
       if (typeof _orig === 'function') _orig(data, timestampMs);
     };
   });
+
+  // FIX: capture stopPlayback and stopScheduler as SEPARATE references
+  // to prevent infinite recursion (stopPlayback internally calls stopScheduler,
+  // so patching both with the same patchFn that calls _origStop = stopPlayback
+  // causes: patchFn → origStopPlayback → stopScheduler(=patchFn) → loop).
   Promise.resolve().then(() => {
-    const _origStop = window.stopPlayback || window.stopScheduler;
-    const patchFn = function () {
+    const _origStopPlayback  = window.stopPlayback;
+    const _origStopScheduler = window.stopScheduler;
+
+    const patchPlayback = function () {
       if (_ssIsActive()) ssBridge.panic();
-      if (typeof _origStop === 'function') _origStop.apply(this, arguments);
+      if (typeof _origStopPlayback === 'function') _origStopPlayback.apply(this, arguments);
     };
-    if (window.stopPlayback)  window.stopPlayback  = patchFn;
-    if (window.stopScheduler) window.stopScheduler = patchFn;
+    const patchScheduler = function () {
+      if (typeof _origStopScheduler === 'function') _origStopScheduler.apply(this, arguments);
+    };
+
+    if (window.stopPlayback)  window.stopPlayback  = patchPlayback;
+    if (window.stopScheduler) window.stopScheduler = patchScheduler;
   });
 
   window.ssSFFileChosen = function (input) {
@@ -685,7 +697,7 @@ registerProcessor('snappy-synth', SnappySynthProcessor);
   function _esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
   function _sz(b)  { return b < 1048576 ? (b/1024).toFixed(1)+' KB' : (b/1048576).toFixed(1)+' MB'; }
 
-})();
+}());
 
 
 // ═════════════════════════════════════════════════════════════════════════════
