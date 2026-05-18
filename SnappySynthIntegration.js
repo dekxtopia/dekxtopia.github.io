@@ -631,6 +631,9 @@ registerProcessor('snappy-synth', SnappySynthProcessor);
     window.midiOutput = _fakeOutput;
     window.midiEnabled = true;
 
+    // FIX: ensure AudioContext is resumed on next user interaction
+    document.addEventListener('click', () => ssBridge.resumeCtx(), { once: true });
+
     ssBridge.init();
   }
 
@@ -767,11 +770,19 @@ const ssBridge = (function () {
     }
   }
 
-  function sendDword(dword) {
-    if (!node) { init(); return; }
-    if (ctx?.state === 'suspended') ctx.resume();
-    node.port.postMessage({ type: 'midi', dword });
+  // FIX: await ctx.resume() before posting MIDI to prevent silent audio
+  // when the AudioContext is in suspended state.
+  async function sendDword(dword) {
+    if (!node) { await init(); }
+    if (ctx && ctx.state === 'suspended') await ctx.resume();
+    if (node) node.port.postMessage({ type: 'midi', dword });
   }
+
+  // Expose for explicit resume on user interaction
+  async function resumeCtx() {
+    if (ctx && ctx.state === 'suspended') await ctx.resume();
+  }
+
   function loadSFBuffer(arrayBuffer, name) {
     if (!node) return;
     node.port.postMessage({ type: 'load_sf_buffer', buffer: arrayBuffer, name }, [arrayBuffer]);
@@ -786,5 +797,5 @@ const ssBridge = (function () {
     node?.port.postMessage({ type: 'settings', settings: { [key]: value } });
   }
 
-  return { init, sendDword, loadSFBuffer, loadSFUrl, panic, updateSetting };
+  return { init, sendDword, resumeCtx, loadSFBuffer, loadSFUrl, panic, updateSetting };
 }());
