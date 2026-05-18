@@ -4,6 +4,21 @@
  * The render node sends pre-rendered audio chunks to the main thread which
  * relays them immediately to the player node.  Play/pause/seek are signalled
  * via postMessage to both nodes.
+ *
+ * FIX CRITICAL 1: Intercept the actual play/pause flow from MPWGL2.
+ *   The HTML player never calls window._setPlaying() — it sets isPlaying
+ *   directly and calls startScheduler()/stopScheduler().  We monkey-patch
+ *   those two functions instead so the bridge always knows the play state.
+ *
+ * FIX CRITICAL 2: _enqueueMidi override now also handles the case where
+ *   the Embedded Synth tab is active but midiEnabled was set to false by
+ *   the tab switch — we bypass the midiEnabled gate entirely for the synth.
+ *
+ * FIX CRITICAL 3: ssBridge.play() is called from our patched
+ *   startScheduler() every time the player starts, not just on tab activate.
+ *
+ * FIX CRITICAL 4: After SF2 finishes loading, re-sync the play state so
+ *   voices become active immediately if playback was already running.
  */
 
 (function () {
@@ -179,7 +194,12 @@
     outSection.appendChild(panel);
   }
 
-  // ── 4. Tab activation ─────────────────────────────────────────────────────
+  // ── 4. Helpers ────────────────────────────────────────────────────────────
+  function _ssIsActive() {
+    return !!document.getElementById('tabSnappy')?.classList.contains('active');
+  }
+
+  // ── 5. Tab activation ─────────────────────────────────────────────────────
   function _ssActivateTab() {
     ['tabWmidi','tabMidiIn','tabNone'].forEach(id => {
       const el = document.getElementById(id);
@@ -190,19 +210,21 @@
     });
     document.getElementById('tabSnappy')?.classList.add('active');
     document.getElementById('snappyPanel')?.classList.add('on');
-    if (typeof midiEnabled !== 'undefined') window.midiEnabled = false;
-    // FIX: init the bridge and then sync the current play state so the
-    // player node is not left permanently paused after tab switch.
+    // Disable native MIDI output — we take over _enqueueMidi
+    if (typeof window.midiEnabled !== 'undefined') window.midiEnabled = false;
+
+    // FIX CRITICAL 1+3: init bridge, then immediately signal play if the
+    // player is currently running.  We read the real isPlaying var from the
+    // MPWGL2 scope via the global reference we set up in startScheduler hook.
     ssBridge.init().then(() => {
-      if (typeof window._isPlaying === 'boolean' ? window._isPlaying : false) {
-        ssBridge.play();
-      }
+      if (window._ssIsPlaying) ssBridge.play();
     });
   }
 
   function _ssDeactivateTab() {
     ['tabWmidi','tabMidiIn','tabNone'].forEach(id => {
-      const el = document.getElementById(id); if (el) el.classList.remove('ss-tab-disabled');
+      const el = document.getElementById(id);
+      if (el) { el.classList.remove('ss-tab-disabled'); }
     });
     document.getElementById('tabSnappy')?.classList.remove('active');
     document.getElementById('snappyPanel')?.classList.remove('on');
@@ -213,31 +235,69 @@
     const btn = document.getElementById(id); if (!btn) return;
     btn.addEventListener('click', () => {
       _ssDeactivateTab();
-      if (id !== 'tabNone' && typeof midiEnabled !== 'undefined') window.midiEnabled = true;
+      if (id !== 'tabNone' && typeof window.midiEnabled !== 'undefined')
+        window.midiEnabled = true;
     }, true);
   });
 
-  // ── 5. Intercept _enqueueMidi ─────────────────────────────────────────────
-  const _origEnqueue = window._enqueueMidi;
-  window._enqueueMidi = function (data, timestampMs) {
-    if (document.getElementById('tabSnappy')?.classList.contains('active')) {
-      ssBridge.sendDword((data[0]&0xFF)|((data[1]||0)&0xFF)<<8|((data[2]||0)&0xFF)<<16);
-      return;
-    }
-    if (typeof _origEnqueue === 'function') _origEnqueue(data, timestampMs);
-  };
+  // ── 6. FIX CRITICAL 1+3: Patch startScheduler / stopScheduler ────────────
+  // MPWGL2 never calls _setPlaying(). It calls startScheduler() to begin
+  // playback and stopScheduler() / _midiAllOff() to stop.  We wrap those
+  // functions so the bridge always receives play/pause signals.
+  //
+  // We defer the patch to the next microtask so that MPWGL2's own
+  // startScheduler definition has already been evaluated.
+  Promise.resolve().then(() => {
+    const _origStart = window.startScheduler;
+    const _origStop  = window.stopScheduler;
 
-  // FIX: track play state globally so _ssActivateTab can read it on demand.
-  const _origSetPlaying = window._setPlaying;
-  window._setPlaying = function (playing) {
-    window._isPlaying = !!playing;   // ← expose current state
-    if (document.getElementById('tabSnappy')?.classList.contains('active')) {
-      if (playing) ssBridge.play(); else ssBridge.pause();
-    }
-    if (typeof _origSetPlaying === 'function') _origSetPlaying(playing);
-  };
+    window.startScheduler = function () {
+      window._ssIsPlaying = true;
+      if (_ssIsActive()) ssBridge.play();
+      if (typeof _origStart === 'function') _origStart.apply(this, arguments);
+    };
 
-  // ── 6. SF loading UI helpers ──────────────────────────────────────────────
+    window.stopScheduler = function () {
+      window._ssIsPlaying = false;
+      if (_ssIsActive()) ssBridge.pause();
+      if (typeof _origStop === 'function') _origStop.apply(this, arguments);
+    };
+  });
+
+  // ── 7. FIX CRITICAL 2: Intercept _enqueueMidi ────────────────────────────
+  // We override _enqueueMidi AFTER the page script has defined it so
+  // _origEnqueue is always the real implementation.
+  // When the Embedded Synth tab is active we route every MIDI event directly
+  // to the render worklet as a DWORD, bypassing the midiEnabled gate.
+  Promise.resolve().then(() => {
+    const _origEnqueue = window._enqueueMidi;
+    window._enqueueMidi = function (data, timestampMs) {
+      if (_ssIsActive()) {
+        // Build a 3-byte MIDI DWORD: status | (data1<<8) | (data2<<16)
+        const dword = (data[0] & 0xFF) |
+                      (((data[1] || 0) & 0xFF) << 8) |
+                      (((data[2] || 0) & 0xFF) << 16);
+        ssBridge.sendDword(dword);
+        return;
+      }
+      if (typeof _origEnqueue === 'function') _origEnqueue(data, timestampMs);
+    };
+  });
+
+  // ── 8. FIX CRITICAL 4: expose _ssIsPlaying via stopPlayback patch ─────────
+  // stopPlayback() in MPWGL2 sets isPlaying=false and calls stopScheduler().
+  // Our stopScheduler hook covers the pause case already, but we also patch
+  // stopPlayback to make sure _ssIsPlaying stays in sync on hard stop.
+  Promise.resolve().then(() => {
+    const _origStop = window.stopPlayback;
+    window.stopPlayback = function () {
+      window._ssIsPlaying = false;
+      if (_ssIsActive()) { ssBridge.pause(); ssBridge.panic(); }
+      if (typeof _origStop === 'function') _origStop.apply(this, arguments);
+    };
+  });
+
+  // ── 9. SF loading UI helpers ──────────────────────────────────────────────
   window.ssSFFileChosen = function (input) {
     const file = input.files && input.files[0]; if (file) _readAndLoadFile(file);
   };
@@ -254,11 +314,13 @@
     if (label) label.innerHTML = '<strong>' + _esc(file.name) + '</strong> (' + _sz(file.size) + ')';
     document.getElementById('ssSFDropZone')?.classList.add('has-file');
     const reader = new FileReader();
-    // FIX: after the SF2 is loaded into the worklet, re-sync play state so the
-    // player node starts draining if playback was already active.
+    // FIX CRITICAL 4: after the SF2 is loaded and parsed inside the worklet
+    // the sf_loaded message handler in the bridge will call play() if we are
+    // currently playing — see ssBridge._doInit() renderNode.port.onmessage.
     reader.onload  = e => ssBridge.init().then(() => {
       ssBridge.loadSFBuffer(e.target.result, file.name);
-      if (window._isPlaying) ssBridge.play();
+      // Do NOT call play() here — wait for sf_loaded from the worklet so we
+      // know voices are actually ready before draining the ring.
     });
     reader.onerror = () => _sfSetStatus('File read error', 'err');
     reader.readAsArrayBuffer(file);
@@ -267,11 +329,7 @@
     const url = document.getElementById('ssSFUrl')?.value.trim();
     if (!url) { typeof showToast==='function' && showToast('Enter a .sf2 URL first'); return; }
     _sfSetStatus('Connecting…', 'loading');
-    // FIX: same play-state re-sync after URL load.
-    ssBridge.init().then(() => {
-      ssBridge.loadSF(url);
-      if (window._isPlaying) ssBridge.play();
-    });
+    ssBridge.init().then(() => ssBridge.loadSF(url));
   };
   window.ssToggleUrlRow = function () {
     const row=document.getElementById('ssSFUrlRow'), t=document.getElementById('ssUrlToggle');
@@ -299,11 +357,10 @@ const ssBridge = (function () {
   let renderNode   = null;
   let playerNode   = null;
   let _initPromise = null;
-  let _modulePromise = null;   // resolves once addModule() has finished
+  let _modulePromise = null;
   let _bufferSec   = 8;
   let _playing     = false;
 
-  // Absolute URL — resolves correctly regardless of AudioWorklet context
   const _driverURL = new URL('SnappySynthDriver.js', document.baseURI).href;
 
   const _settings = {
@@ -317,26 +374,18 @@ const ssBridge = (function () {
   let _statSkip   = 0;
   let _statsRaf   = null;
 
-  // ── Pre-load: register the worklet module on first user interaction ────────
+  // ── Pre-load module on first user gesture ─────────────────────────────────
   function _preloadModule() {
     if (_modulePromise) return _modulePromise;
     if (!window.AudioWorklet) { _modulePromise = Promise.resolve(); return _modulePromise; }
     try {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       _modulePromise = audioCtx.audioWorklet.addModule(_driverURL);
-      _modulePromise.catch(() => {
-        // If preload fails reset so _doInit can retry with a fresh context
-        _modulePromise = null;
-        audioCtx = null;
-      });
-    } catch(e) {
-      _modulePromise = null;
-      audioCtx = null;
-    }
+      _modulePromise.catch(() => { _modulePromise = null; audioCtx = null; });
+    } catch(e) { _modulePromise = null; audioCtx = null; }
     return _modulePromise || Promise.resolve();
   }
 
-  // Kick off pre-load on the very first user gesture
   ['click','keydown','touchstart'].forEach(ev =>
     document.addEventListener(ev, function _once() {
       document.removeEventListener(ev, _once);
@@ -360,10 +409,7 @@ const ssBridge = (function () {
       if (fill)  fill.style.width = pct.toFixed(1) + '%';
       if (cur)   cur.textContent  = _statBufSec.toFixed(1) + ' s';
       if (badge) { badge.textContent = 'skip >' + _statSkip; badge.classList.toggle('on', _statSkip > 0); }
-
-      // ── Exponer skip vel de SnappySynth al chart global ──
       window._ssSkipVel = _statSkip;
-
       _statsRaf = requestAnimationFrame(tick);
     }
     _statsRaf = requestAnimationFrame(tick);
@@ -377,12 +423,9 @@ const ssBridge = (function () {
 
   async function _doInit() {
     try {
-      // If the preload already started, wait for it to finish so the module
-      // is guaranteed to be registered before we create AudioWorkletNodes.
       if (_modulePromise) {
         await _modulePromise;
       } else {
-        // No preload yet — create context and load module now
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         await audioCtx.audioWorklet.addModule(_driverURL);
       }
@@ -400,8 +443,8 @@ const ssBridge = (function () {
           _sfSetStatus('Loaded ✔', 'ok');
           const r = document.getElementById('ssSFRegions');
           if (r) r.textContent = d.regionCount + ' regions';
-          // FIX: re-sync play state after the SF2 finishes parsing inside the
-          // worklet — this is the critical moment where voices become usable.
+          // FIX CRITICAL 4: voices are now ready — if we were playing before
+          // the SF2 finished loading, resume the render + player nodes.
           if (_playing) {
             renderNode.port.postMessage({ type: 'playing', value: true });
             playerNode?.port.postMessage({ type: 'playing', value: true });
@@ -429,8 +472,7 @@ const ssBridge = (function () {
       });
       playerNode.connect(audioCtx.destination);
 
-      // FIX: if play() was called before init finished (e.g. MIDI was already
-      // playing when the tab was activated) propagate the playing flag now.
+      // FIX CRITICAL 3: if play() was called before init finished propagate now
       if (_playing) {
         renderNode.port.postMessage({ type: 'playing', value: true });
         playerNode.port.postMessage({ type: 'playing', value: true });
