@@ -6,14 +6,17 @@
  * http:// and https:// without any CORS configuration.
  *
  * Flow:
- *   MPWGL2 → _enqueueMidi(data) → ssBridge.sendDword(dword)
+ *   MPWGL2 → midiOutput.send(data) → ssBridge.sendDword(dword)
  *   → worklet port → process() → outputs[0] → AudioContext.destination → speakers
+ *
+ * Fix: instead of patching the local _enqueueMidi function (not on window),
+ * we inject a fake midiOutput object. MPWGL2 checks `midiEnabled && midiOutput`
+ * before sending — so when SnappySynth tab is active we set window.midiEnabled=true
+ * and window.midiOutput = fakeOutput, which calls ssBridge.sendDword().
  */
 
 // ═════════════════════════════════════════════════════════════════════════════
 // INLINED DRIVER SOURCE — SnappySynthDriver.js embedded as a template literal.
-// Creating a Blob from a string in memory is 100% same-origin by definition;
-// the browser never makes a network request.
 // ═════════════════════════════════════════════════════════════════════════════
 const _SS_DRIVER_SRC = `
 'use strict';
@@ -589,10 +592,30 @@ registerProcessor('snappy-synth', SnappySynthProcessor);
     outSection.appendChild(panel);
   }
 
+  // ── Fake midiOutput object ──────────────────────────────────────────────────
+  // MPWGL2 calls: if (midiEnabled && midiOutput) midiOutput.send(data, timestamp)
+  // We inject this object as window.midiOutput when SnappySynth tab is active.
+  // data is a Uint8Array or Array like [status, b1, b2].
+  const _fakeOutput = {
+    name: 'SnappySynth (Embedded)',
+    send(data /*, timestamp — ignored, synth handles timing internally */) {
+      if (!data || data.length === 0) return;
+      const dword = (data[0] & 0xFF)
+                  | (((data[1] || 0) & 0xFF) << 8)
+                  | (((data[2] || 0) & 0xFF) << 16);
+      ssBridge.sendDword(dword);
+    },
+  };
+
+  // Save reference to the real midiOutput before we touch anything
+  let _realMidiOutput = null;
+
   function _ssIsActive() {
     return !!document.getElementById('tabSnappy')?.classList.contains('active');
   }
+
   function _ssActivateTab() {
+    // Disable other tabs visually
     ['tabWmidi','tabMidiIn','tabNone'].forEach(id => {
       const el = document.getElementById(id);
       if (el) { el.classList.remove('active'); el.classList.add('ss-tab-disabled'); }
@@ -602,58 +625,35 @@ registerProcessor('snappy-synth', SnappySynthProcessor);
     });
     document.getElementById('tabSnappy')?.classList.add('active');
     document.getElementById('snappyPanel')?.classList.add('on');
-    if (typeof window.midiEnabled !== 'undefined') window.midiEnabled = false;
+
+    // Inject fake output — MPWGL2 checks midiEnabled && midiOutput before sending
+    _realMidiOutput = window.midiOutput;
+    window.midiOutput = _fakeOutput;
+    window.midiEnabled = true;
+
     ssBridge.init();
   }
+
   function _ssDeactivateTab() {
     ['tabWmidi','tabMidiIn','tabNone'].forEach(id => {
       const el = document.getElementById(id); if (el) el.classList.remove('ss-tab-disabled');
     });
     document.getElementById('tabSnappy')?.classList.remove('active');
     document.getElementById('snappyPanel')?.classList.remove('on');
+
+    // Restore real output
+    window.midiOutput = _realMidiOutput;
+    _realMidiOutput = null;
+
     ssBridge.panic();
   }
+
   ['tabWmidi','tabMidiIn','tabNone'].forEach(id => {
     const btn = document.getElementById(id); if (!btn) return;
     btn.addEventListener('click', () => {
       _ssDeactivateTab();
       if (id !== 'tabNone' && typeof window.midiEnabled !== 'undefined') window.midiEnabled = true;
     }, true);
-  });
-
-  // Patch _enqueueMidi to route through SnappySynth when active
-  Promise.resolve().then(() => {
-    const _orig = window._enqueueMidi;
-    window._enqueueMidi = function (data, timestampMs) {
-      if (_ssIsActive()) {
-        const dword = (data[0] & 0xFF)
-                    | (((data[1] || 0) & 0xFF) << 8)
-                    | (((data[2] || 0) & 0xFF) << 16);
-        ssBridge.sendDword(dword);
-        return;
-      }
-      if (typeof _orig === 'function') _orig(data, timestampMs);
-    };
-  });
-
-  // FIX: capture stopPlayback and stopScheduler as SEPARATE references
-  // to prevent infinite recursion (stopPlayback internally calls stopScheduler,
-  // so patching both with the same patchFn that calls _origStop = stopPlayback
-  // causes: patchFn → origStopPlayback → stopScheduler(=patchFn) → loop).
-  Promise.resolve().then(() => {
-    const _origStopPlayback  = window.stopPlayback;
-    const _origStopScheduler = window.stopScheduler;
-
-    const patchPlayback = function () {
-      if (_ssIsActive()) ssBridge.panic();
-      if (typeof _origStopPlayback === 'function') _origStopPlayback.apply(this, arguments);
-    };
-    const patchScheduler = function () {
-      if (typeof _origStopScheduler === 'function') _origStopScheduler.apply(this, arguments);
-    };
-
-    if (window.stopPlayback)  window.stopPlayback  = patchPlayback;
-    if (window.stopScheduler) window.stopScheduler = patchScheduler;
   });
 
   window.ssSFFileChosen = function (input) {
@@ -702,8 +702,6 @@ registerProcessor('snappy-synth', SnappySynthProcessor);
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  ssBridge — AudioContext + AudioWorkletNode
-//  addModule receives a blob: URL built from _SS_DRIVER_SRC (in-memory string).
-//  No fetch, no XHR, no file:// restriction, no CORS — ever.
 // ═════════════════════════════════════════════════════════════════════════════
 const ssBridge = (function () {
   let ctx    = null;
@@ -734,7 +732,6 @@ const ssBridge = (function () {
       ctx = new (window.AudioContext || window.webkitAudioContext)();
       if (ctx.state === 'suspended') await ctx.resume();
 
-      // Build blob: URL directly from the inlined string — zero network I/O
       const blob    = new Blob([_SS_DRIVER_SRC], { type: 'application/javascript' });
       const blobURL = URL.createObjectURL(blob);
       await ctx.audioWorklet.addModule(blobURL);
