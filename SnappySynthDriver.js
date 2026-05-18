@@ -60,6 +60,11 @@ const CHUNK_FRAMES  = 2048;
 // Skip vel kicks in when buffered audio drops below this threshold (in frames).
 // At 48 kHz, 9600 frames = 200 ms — tight enough to react before a glitch.
 const SKIP_LOW_FRAMES = 9600;
+// Pre-roll cap when paused: allow up to this many frames in the ring while
+// stopped so that on play() the first chunks are already available, but the
+// ring does not fill with stale silence and block MIDI dispatch forever.
+// 2 × CHUNK_FRAMES ≈ 85 ms — enough for a glitch-free start.
+const PREROLL_FRAMES = CHUNK_FRAMES * 2;
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -412,40 +417,39 @@ class SnappyRenderProcessor extends AudioWorkletProcessor {
   }
 
   // ── Render one BLOCK into the ring ────────────────────────────────────────
-  // Returns false if the ring is full OR if not playing (ring is not being
-  // drained by the player so we must not overfill it with stale silence).
   _renderBlock() {
     const buffered = this._writePos - this._readPos;
 
-    // FIX A: When paused the player does not drain, so the ring fills up with
-    // silence and _readPos never advances.  Stop producing frames until the
-    // player starts draining again.  We keep a small headroom (SKIP_LOW_FRAMES)
-    // so that on play() the first chunks are already queued.
-    if (!this.playing && buffered >= SKIP_LOW_FRAMES) return false;
+    // FIX 1: Always drain the MIDI queue first, before any early-return.
+    // CC, program-change, and note events must be processed even when
+    // the ring is full or we are in paused/stop state — otherwise they
+    // accumulate forever and voices never activate.
+    if (this.midiQueue.length > 0) {
+      const batch = this.midiQueue.splice(0, this.midiQueue.length);
+      for (const dw of batch) this._dispatch(dw);
+    }
 
-    // Ring physically full — wait regardless of play state.
-    if (buffered + BLOCK > this._ringSize) return false;
-
-    // FIX B: skipVel is an ANTI-STARVATION mechanism.  It must rise when the
-    // buffer is NEARLY EMPTY (we are falling behind the DAC), not when it is
-    // full.  Formula: 0 when buffered >= SKIP_LOW_FRAMES, ramps up as buffered
-    // approaches 0.
-    if (this.playing) {
+    // FIX 2: skipVel is an anti-starvation mechanism for when the DAC is
+    // actively draining and we are falling behind.  It must ALWAYS be 0
+    // when not playing — never signal starvation during idle/pause.
+    if (!this.playing) {
+      this._skipVel = 0;
+      // FIX 3: When paused, allow only a small pre-roll (PREROLL_FRAMES) so
+      // that on play() the first chunks are already queued.  Once the pre-roll
+      // is filled we stop rendering — the ring must not fill completely with
+      // stale silence because _readPos never advances while stopped.
+      if (buffered >= PREROLL_FRAMES) return false;
+    } else {
+      // Playing: skipVel rises when the buffer is nearly empty (starvation).
       if (buffered >= SKIP_LOW_FRAMES) {
         this._skipVel = 0;
       } else {
-        // Linear ramp: 0 at SKIP_LOW_FRAMES, 127 at 0 frames buffered.
         this._skipVel = clamp(((SKIP_LOW_FRAMES - buffered) / SKIP_LOW_FRAMES) * 127, 0, 127) | 0;
       }
-    } else {
-      // Not playing — never skip notes (they will be rendered into the
-      // pre-roll buffer so they are ready when play() is called).
-      this._skipVel = 0;
     }
 
-    // Drain MIDI queue first
-    const batch=this.midiQueue.splice(0,this.midiQueue.length);
-    for(const dw of batch)this._dispatch(dw);
+    // Ring physically full — wait regardless of play state.
+    if (buffered + BLOCK > this._ringSize) return false;
 
     // Render BLOCK frames into scratch
     const L=this._scrL, R=this._scrR;
@@ -467,7 +471,6 @@ class SnappyRenderProcessor extends AudioWorkletProcessor {
 
   // ── Flush completed chunks to main thread (relay → player) ────────────────
   _flushChunks() {
-    // Drain from ring into chunk accumulator, send complete chunks
     while(this._writePos - this._readPos >= CHUNK_FRAMES) {
       const rp=this._readPos%this._ringSize;
       const s1=Math.min(CHUNK_FRAMES,this._ringSize-rp);
@@ -478,7 +481,6 @@ class SnappyRenderProcessor extends AudioWorkletProcessor {
         this._chunkR.set(this._ringR.subarray(0,CHUNK_FRAMES-s1),s1);
       }
       this._readPos+=CHUNK_FRAMES;
-      // Transfer ownership (zero-copy)
       const bufL=this._chunkL.buffer.slice(0);
       const bufR=this._chunkR.buffer.slice(0);
       this.port.postMessage({type:'chunk',bufL,bufR},[bufL,bufR]);
@@ -487,12 +489,9 @@ class SnappyRenderProcessor extends AudioWorkletProcessor {
 
   // ── process() ─────────────────────────────────────────────────────────────
   process() {
-    // Fill ring as fast as possible (up to PASSES_PER_CB passes)
     for(let p=0;p<PASSES_PER_CB;p++){if(!this._renderBlock())break;}
-    // Send completed chunks to player via main thread
     this._flushChunks();
 
-    // Stats every ~256 callbacks
     if((++this._statCount&255)===0){
       const buffered=Math.max(0,this._writePos-this._readPos);
       const active=this.voices.filter(v=>v.state!==V_IDLE).length;
@@ -513,10 +512,8 @@ registerProcessor('snappy-render', SnappyRenderProcessor);
 class SnappyPlayerProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super(options);
-    // Queue of {L:Float32Array, R:Float32Array} chunks waiting to play
     this._queue   = [];
-    this._queueFrames = 0;   // total frames queued
-    // Current chunk being drained
+    this._queueFrames = 0;
     this._curL    = null;
     this._curR    = null;
     this._curPos  = 0;
@@ -544,15 +541,12 @@ class SnappyPlayerProcessor extends AudioWorkletProcessor {
     const outL=out[0], outR=out.length>1?out[1]:out[0], len=outL.length;
 
     if(!this.playing||this._queueFrames<len){
-      // Paused or starved — output silence, keep queue intact
       outL.fill(0); outR.fill(0);
       return true;
     }
 
-    // Drain len frames from queue
     let written=0;
     while(written<len){
-      // Load next chunk if current is exhausted
       if(!this._curL||this._curPos>=this._curL.length){
         if(!this._queue.length)break;
         const c=this._queue.shift();
@@ -567,7 +561,6 @@ class SnappyPlayerProcessor extends AudioWorkletProcessor {
       written+=take;
       this._queueFrames-=take;
     }
-    // Zero-fill if we ran short (shouldn't happen after the starve check above)
     if(written<len){outL.fill(0,written);outR.fill(0,written);}
     return true;
   }
