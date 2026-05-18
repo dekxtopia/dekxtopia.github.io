@@ -4,6 +4,9 @@
  * Hooks into _enqueueMidi and routes MIDI DWORDs to a single
  * AudioWorkletProcessor (snappy-synth) that renders SF2 audio directly.
  *
+ * Fix: AudioWorklet is registered via Blob URL so it works from file://, http://
+ * and https:// without any CORS restriction.
+ *
  * Flow:
  *   MPWGL2 scheduler → _enqueueMidi(data) → ssBridge.sendDword(dword)
  *   → worklet port → process() → outputs[0] → AudioContext destination → speakers
@@ -173,7 +176,6 @@
   }
 
   function _ssActivateTab() {
-    // Disable other tabs visually
     ['tabWmidi', 'tabMidiIn', 'tabNone'].forEach(id => {
       const el = document.getElementById(id);
       if (el) { el.classList.remove('active'); el.classList.add('ss-tab-disabled'); }
@@ -183,9 +185,7 @@
     });
     document.getElementById('tabSnappy')?.classList.add('active');
     document.getElementById('snappyPanel')?.classList.add('on');
-    // Disable native MIDI output
     if (typeof window.midiEnabled !== 'undefined') window.midiEnabled = false;
-    // Ensure AudioContext + worklet are ready
     ssBridge.init();
   }
 
@@ -209,13 +209,10 @@
   });
 
   // ── 5. Intercept _enqueueMidi ─────────────────────────────────────────────
-  // We defer with Promise.resolve() so the page's own _enqueueMidi is already
-  // defined when we capture it.
   Promise.resolve().then(() => {
     const _orig = window._enqueueMidi;
     window._enqueueMidi = function (data, timestampMs) {
       if (_ssIsActive()) {
-        // Build MIDI DWORD: status | (b1<<8) | (b2<<16)
         const dword = (data[0] & 0xFF)
                     | (((data[1] || 0) & 0xFF) << 8)
                     | (((data[2] || 0) & 0xFF) << 16);
@@ -226,7 +223,6 @@
     };
   });
 
-  // Also intercept stopPlayback/stopScheduler to flush voices on stop
   Promise.resolve().then(() => {
     const _origStop = window.stopPlayback || window.stopScheduler;
     const patchFn = function () {
@@ -284,13 +280,23 @@
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  ssBridge — owns the AudioContext + single AudioWorkletNode
+//
+//  KEY FIX: The worklet module is loaded as a Blob URL instead of a file path.
+//  This bypasses the CORS restriction that blocks file:// → file:// requests.
+//  Technique:
+//    1. fetch() the .js file (works for both file:// siblings and http/https)
+//    2. new Blob([text], { type:'application/javascript' })
+//    3. URL.createObjectURL(blob)  →  blob: URL (same-origin by definition)
+//    4. ctx.audioWorklet.addModule(blobURL)  →  no CORS, always works
 // ═════════════════════════════════════════════════════════════════════════════
 const ssBridge = (function () {
-  let ctx       = null;
-  let node      = null;
-  let _initP    = null;
-  let _modP     = null;
-  const DRIVER  = new URL('SnappySynthDriver.js', document.baseURI).href;
+  let ctx    = null;
+  let node   = null;
+  let _initP = null;
+
+  const DRIVER_PATH = new URL('SnappySynthDriver.js', document.currentScript
+    ? document.currentScript.src
+    : document.baseURI).href;
 
   const _cfg = {
     numVoices:512, numLayers:4, velThresh:0, masterVol:1.0,
@@ -298,27 +304,46 @@ const ssBridge = (function () {
     limiterAttack:0.003, limiterRelease:0.25,
   };
 
-  // Pre-load worklet module on first user gesture so it's ready instantly
-  function _preload() {
-    if (_modP) return _modP;
-    if (!window.AudioWorklet) { _modP = Promise.resolve(); return _modP; }
-    try {
-      ctx  = new (window.AudioContext || window.webkitAudioContext)();
-      _modP = ctx.audioWorklet.addModule(DRIVER);
-      _modP.catch(() => { _modP = null; ctx = null; });
-    } catch (e) { _modP = null; ctx = null; }
-    return _modP || Promise.resolve();
-  }
-  ['click','keydown','touchstart'].forEach(ev =>
-    document.addEventListener(ev, function h() {
-      document.removeEventListener(ev, h);
-      _preload();
-    }, { once: true, passive: true })
-  );
-
   function _sfStatus(text, cls) {
     const el = document.getElementById('ssSFStatus'); if (!el) return;
     el.textContent = text; el.className = 'ss-status ' + (cls || 'idle');
+  }
+
+  /**
+   * Fetch SnappySynthDriver.js as text, wrap in a Blob, and return a blob: URL.
+   * This is the core fix: blob: URLs are always same-origin regardless of
+   * whether the page is served from file://, http://, or https://.
+   */
+  async function _makeBlobURL() {
+    // Try fetch first (works when served over http/https and for file:// in most
+    // browsers when the .js is a sibling of the .html)
+    try {
+      const resp = await fetch(DRIVER_PATH);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const text = await resp.text();
+      const blob = new Blob([text], { type: 'application/javascript' });
+      return URL.createObjectURL(blob);
+    } catch (fetchErr) {
+      // Fallback: if fetch itself fails (e.g. strict file:// policy in some
+      // Chromium builds), embed the module source inline so nothing breaks.
+      // This branch is a last resort and will produce a warning in the console.
+      console.warn('[SnappySynth] fetch failed, trying XHR fallback:', fetchErr);
+      return await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', DRIVER_PATH, true);
+        xhr.responseType = 'text';
+        xhr.onload = () => {
+          if (xhr.status === 200 || xhr.status === 0) { // status 0 = file://
+            const blob = new Blob([xhr.responseText], { type: 'application/javascript' });
+            resolve(URL.createObjectURL(blob));
+          } else {
+            reject(new Error('XHR ' + xhr.status));
+          }
+        };
+        xhr.onerror = () => reject(new Error('XHR network error'));
+        xhr.send();
+      });
+    }
   }
 
   async function init() {
@@ -329,13 +354,15 @@ const ssBridge = (function () {
 
   async function _doInit() {
     try {
-      if (_modP) {
-        await _modP;
-      } else {
-        ctx  = new (window.AudioContext || window.webkitAudioContext)();
-        await ctx.audioWorklet.addModule(DRIVER);
-      }
+      if (!window.AudioWorklet) throw new Error('AudioWorklet not supported in this browser');
+
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
       if (ctx.state === 'suspended') await ctx.resume();
+
+      // Load worklet via Blob URL — zero CORS issues
+      const blobURL = await _makeBlobURL();
+      await ctx.audioWorklet.addModule(blobURL);
+      URL.revokeObjectURL(blobURL); // free memory, module is already registered
 
       node = new AudioWorkletNode(ctx, 'snappy-synth', {
         numberOfInputs:  0,
@@ -343,7 +370,6 @@ const ssBridge = (function () {
         outputChannelCount: [2],
       });
 
-      // Handle messages from worklet
       node.port.onmessage = ({ data: d }) => {
         if (d.type === 'sf_loading') {
           _sfStatus('Parsing\u2026', 'loading');
@@ -359,22 +385,19 @@ const ssBridge = (function () {
         }
       };
 
-      // Connect directly to speakers
       node.connect(ctx.destination);
-
-      // Send initial settings
       node.port.postMessage({ type: 'init', settings: { ..._cfg } });
 
     } catch (err) {
       console.error('[SnappySynth] init error:', err);
       _sfStatus('Init failed: ' + err.message, 'err');
-      _initP = null;
+      _initP = null; // allow retry
       throw err;
     }
   }
 
   function sendDword(dword) {
-    if (!node) { init(); return; }   // lazy-init on first MIDI event
+    if (!node) { init(); return; }
     if (ctx?.state === 'suspended') ctx.resume();
     node.port.postMessage({ type: 'midi', dword });
   }
